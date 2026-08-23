@@ -7,15 +7,15 @@
 # decimal128-text-codec-c/tests/vectors, which is this family's corpus of
 # record. That repo is private, so this compares against decimal128-resources
 # instead -- the public repo where the decimal128-c engine generated them, and
-# which the C copy tracks exactly except for the two rows below. Checking the
-# grandparent rather than the parent costs nothing here and is the only version
-# CI can actually reach without credentials.
+# which the C copy tracks exactly. Checking the grandparent rather than the
+# parent costs nothing here and is the only version CI can actually reach
+# without credentials.
 #
-# The error table is EXPECTED to differ, by exactly two rows and no others.
-# "NaN(1)" and "NaN(123)" assert a NaN-payload rejection the codecs no longer
-# perform, and upstream is deliberately left alone because it is generated and
-# the engine is right to reject them. Anything beyond those two rows is real
-# drift and fails here.
+# This is a plain exact comparison: every data row must match, in order. It used
+# to exempt "NaN(1)" and "NaN(123)", which upstream rejected and the codecs
+# accepted; the full ports took the parenthesised payload in 2026-08-23 and
+# upstream moved both rows to the parse table, so there is nothing left to
+# exempt.
 #
 #   usage: check_vendored_corpus.sh <resources/string_bid_dpd> <vectors dir>
 #
@@ -37,10 +37,6 @@ for d in "$UPSTREAM" "$VENDORED"; do
     fi
 done
 
-# The rows the codecs deliberately do not carry. Matched on the whole quoted
-# text field so a row that merely mentions NaN( is unaffected.
-EXEMPT='^"NaN\(1\)" ,|^"NaN\(123\)" ,'
-
 FILES='string_bid128_dpd128_100.csv.txt
 string_bid128_dpd128_error.csv.txt
 string_bid128_dpd128_noncanonical.csv.txt
@@ -49,9 +45,9 @@ string_bid128_dpd128_parse.csv.txt'
 tmp=$(mktemp -d)
 trap 'rm -rf "$tmp"' EXIT
 
-# Data rows only: comments and blank lines carry the prose that legitimately
-# differs between the two copies (the vendored error file has the note
-# explaining the delta).
+# Data rows only. The two copies are byte-identical today, but comparing data
+# rows keeps the check meaningful if upstream ever regenerates its header
+# (a Generated: date, a row-count line) without changing a single vector.
 datarows() {
     grep -v '^[[:space:]]*#' "$1" | grep '[^[:space:]]' || true
 }
@@ -75,25 +71,8 @@ for f in $FILES; do
     datarows "$up" > "$tmp/up"
     datarows "$ven" > "$tmp/ven"
 
-    if [ "$f" = "string_bid128_dpd128_error.csv.txt" ]; then
-        exemptSeen=$(grep -cE "$EXEMPT" "$tmp/up" || true)
-        if [ "$exemptSeen" -ne 2 ]; then
-            echo "DRIFT $f: expected the 2 exempt rows upstream, found $exemptSeen" >&2
-            echo "       (upstream has been edited -- the corpus is a fixed artifact," >&2
-            echo "        its generator is gone, so reread the header note in the" >&2
-            echo "        vendored copy before changing anything)" >&2
-            status=1
-        fi
-        grep -vE "$EXEMPT" "$tmp/up" > "$tmp/up.filtered" || true
-        mv "$tmp/up.filtered" "$tmp/up"
-        if grep -qE "$EXEMPT" "$tmp/ven"; then
-            echo "DRIFT $f: the vendored copy carries an exempt row it should not" >&2
-            status=1
-        fi
-    fi
-
     if ! diff -u "$tmp/up" "$tmp/ven" > "$tmp/diff"; then
-        echo "DRIFT $f: vendored copy differs from upstream beyond the exemptions" >&2
+        echo "DRIFT $f: vendored copy differs from upstream" >&2
         sed -n '1,40p' "$tmp/diff" >&2
         status=1
     else
@@ -102,6 +81,6 @@ for f in $FILES; do
 done
 
 if [ "$status" -eq 0 ]; then
-    echo "vendored corpus matches upstream, with the 2 documented exemptions"
+    echo "vendored corpus matches upstream exactly"
 fi
 exit "$status"
