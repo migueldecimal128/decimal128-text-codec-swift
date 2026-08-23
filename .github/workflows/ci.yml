@@ -1,15 +1,13 @@
 name: ci
 
 # The codec is one Swift file with no dependencies, so CI exists to cover what a
-# developer's host does not: the other platform, the release configuration where
-# the `verify` assertions are compiled out, and the vendored corpus against the
-# public upstream it was copied from.
+# developer's host does not: the other platform, and the release configuration
+# where the `verify` assertions are compiled out.
 #
-# No submodules: the conformance vectors are vendored under
-# Tests/Decimal128TextCodecTests/vectors, so a plain checkout is enough. The
-# 84,764-row canonical table is NOT vendored -- it is some 10 MB -- and its test
-# registers only when a sibling decimal128-resources checkout exists, so the
-# build jobs clone it to get those rows too.
+# The conformance vectors come from decimal128-resources, mounted as a submodule
+# at <repo>/resources, so every checkout needs `submodules: recursive`. The
+# 84,764-row canonical table comes with it, so it is now part of every run rather
+# than something only a developer with a sibling checkout ever exercised.
 
 on:
   push:
@@ -21,8 +19,8 @@ jobs:
     runs-on: macos-15
     steps:
       - uses: actions/checkout@v4
-      - name: Clone decimal128-resources (for the canonical table)
-        run: git clone --depth 1 https://github.com/migueldecimal128/decimal128-resources.git ../decimal128-resources
+        with:
+          submodules: recursive
       - name: Build
         run: swift build
       # Debug arms VERIFY_ENABLED, so this run exercises the internal-state
@@ -40,27 +38,11 @@ jobs:
     container: swift:6.0
     steps:
       - uses: actions/checkout@v4
-      - name: Clone decimal128-resources (for the canonical table)
-        run: git clone --depth 1 https://github.com/migueldecimal128/decimal128-resources.git ../decimal128-resources
+        with:
+          submodules: recursive
       - name: Build
         run: swift build
       - name: Test (debug, assertions armed)
         run: swift test
       - name: Test (release, assertions off)
         run: swift test -c release -Xswiftc -enable-testing
-
-  # Tests/.../vectors is a vendored copy of the shared corpus, and a copy nothing
-  # compares is a copy that drifts. decimal128-text-codec-c is the family's
-  # corpus of record but is private; decimal128-resources is the public repo that
-  # copy tracks, exactly, except for the two documented exemptions. So CI checks
-  # the grandparent -- which is the only version it can reach without
-  # credentials, and enforces the same relationship.
-  corpus-drift:
-    name: vendored corpus vs upstream
-    runs-on: ubuntu-latest
-    steps:
-      - uses: actions/checkout@v4
-      - name: Clone decimal128-resources
-        run: git clone --depth 1 https://github.com/migueldecimal128/decimal128-resources.git ../decimal128-resources
-      - name: Check for drift
-        run: ./Scripts/check_vendored_corpus.sh ../decimal128-resources/string_bid_dpd Tests/Decimal128TextCodecTests/vectors

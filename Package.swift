@@ -37,15 +37,14 @@ let package = Package(
             name: "Decimal128TextCodec",
             swiftSettings: codecSwiftSettings
         ),
-        // The conformance vectors are vendored under Tests/.../vectors and read
-        // at run time through Bundle.module, rather than transcribed into Swift
-        // source. The reference transcribes them because Kotlin commonTest has
-        // no portable file access; SwiftPM resources have no such limitation,
-        // and a data file is one hop closer to the corpus of record.
+        // No `resources:` here. The conformance vectors are not carried in this
+        // repo at all -- they are read off the filesystem from the
+        // decimal128-resources submodule mounted at <repo>/resources, the same
+        // mount every decimal128 port uses. CorpusSupport.swift resolves it from
+        // `#filePath`, so it holds wherever the build directory happens to be.
         .testTarget(
             name: "Decimal128TextCodecTests",
             dependencies: ["Decimal128TextCodec"],
-            resources: [.copy("vectors")],
             swiftSettings: codecSwiftSettings
         ),
     ],

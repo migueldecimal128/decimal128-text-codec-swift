@@ -20,7 +20,7 @@ import Testing
 /// suite by Mike Cowlishaw, `dqEncode.decTest` and `dqCanonical.decTest`.
 ///
 /// These are a third oracle, independent both of this codec and of the
-/// `decimal128-c` engine that generated the `string_bid_dpd` corpus. It is older
+/// `decimal128-c` engine that generated the `text_bid_dpd` corpus. It is older
 /// than this ecosystem, and it is what makes the DPD declet arithmetic
 /// trustworthy rather than merely self-consistent.
 ///

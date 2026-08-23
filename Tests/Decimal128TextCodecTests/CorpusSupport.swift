@@ -37,10 +37,10 @@ enum Hex {
 }
 
 // ---------------------------------------------------------------------------
-// The vendored conformance corpus.
+// The shared conformance corpus.
 // ---------------------------------------------------------------------------
 
-/// One row of a `string_bid_dpd` table.
+/// One row of a `text_bid_dpd` table.
 struct CorpusRow {
     let text: String
     let bid: UInt128
@@ -52,7 +52,7 @@ struct CorpusRow {
 
 enum Corpus {
 
-    /// The four tables vendored under `Tests/.../vectors`, and their row counts.
+    /// The five tables in `resources/text_bid_dpd`, and their row counts.
     ///
     /// The counts are asserted by the tests. That is not ceremony: the text
     /// column of `parse` and `error` is double-quoted with `\\` and `\"`
@@ -61,24 +61,30 @@ enum Corpus {
     /// backslash. A naive comma split silently corrupts four rows and still
     /// passes, since a mangled malformed input fails to parse either way. The
     /// row count is what catches it.
-    static let hundred = "string_bid128_dpd128_100"
-    static let nonCanonical = "string_bid128_dpd128_noncanonical"
-    static let parse = "string_bid128_dpd128_parse"
-    static let error = "string_bid128_dpd128_error"
+    static let hundred = "text_bid128_dpd128_100"
+    static let nonCanonical = "text_bid128_dpd128_noncanonical"
+    static let parse = "text_bid128_dpd128_parse"
+    static let error = "text_bid128_dpd128_error"
+    static let canonical = "text_bid128_dpd128_canonical"
 
-    /// A vendored table, read out of the test bundle.
+    /// `resources/text_bid_dpd` — the decimal128-resources submodule, mounted at
+    /// the repo root the way every decimal128 port mounts it. Nothing is copied
+    /// into this repo and there is no test bundle involved, so the directory is
+    /// resolved from this file's own path rather than from `Bundle.module`:
+    /// tests run out of the build directory, but `#filePath` does not move.
+    static let directory: URL = URL(fileURLWithPath: #filePath)
+        .deletingLastPathComponent()  // Decimal128TextCodecTests
+        .deletingLastPathComponent()  // Tests
+        .deletingLastPathComponent()  // repo root
+        .appendingPathComponent("resources/text_bid_dpd")
+
+    /// One table, read off the filesystem.
     static func load(_ name: String) throws -> [CorpusRow] {
-        guard let url = Bundle.module.url(forResource: name, withExtension: "csv.txt",
-                                          subdirectory: "vectors") else {
+        let url = directory.appendingPathComponent("\(name).csv.txt")
+        guard FileManager.default.fileExists(atPath: url.path) else {
             throw CorpusError.missing(name)
         }
         return try parse(String(contentsOf: url, encoding: .utf8), name)
-    }
-
-    /// A table at an arbitrary path — the un-vendored canonical file.
-    static func loadFile(_ path: String) throws -> [CorpusRow] {
-        let url = URL(fileURLWithPath: path)
-        return try parse(String(contentsOf: url, encoding: .utf8), url.lastPathComponent)
     }
 
     private static func parse(_ contents: String, _ name: String) throws -> [CorpusRow] {
@@ -176,7 +182,11 @@ enum CorpusError: Error, CustomStringConvertible {
     var description: String {
         switch self {
         case .missing(let name):
-            return "vector file \(name).csv.txt is not in the test bundle"
+            return """
+                \(name).csv.txt is missing from \(Corpus.directory.path). \
+                The decimal128-resources submodule is not checked out: run \
+                `git submodule update --init --recursive`.
+                """
         case .malformed(let name, let line, let bid, let dpd):
             return "\(name).csv.txt line \(line): malformed hex columns <\(bid)> <\(dpd)>"
         }
