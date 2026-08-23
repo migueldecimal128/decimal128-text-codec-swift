@@ -102,9 +102,8 @@ primitives in a release build.
 |---|---|
 | `TestCorpusVectors` | the four conformance tables over the shared corpus — 2,438 rows, both directions, both formats |
 | `TestCanonicalCorpus` | the full 84,764-row canonical table |
-| `TestBid128Parse` | hand-chosen BID parse vectors, the parenthesised-NaN payload rules, and the parse contract |
+| `TestBid128Parse` | hand-chosen BID parse vectors, including the parenthesised-NaN payloads the corpus cannot carry |
 | `TestDpdDeclet` | the declet codec, exhaustively over all 1024 patterns |
-| `TestPublicAPI` | the promises as properties: paren-equals-bare, failure always writes, render/parse/render is a fixed point over 20,000 random patterns |
 
 The conformance vectors are read from `resources/text_bid_dpd`, where
 `resources` is the `decimal128-resources` submodule — the same mount every
