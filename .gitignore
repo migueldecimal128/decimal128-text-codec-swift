@@ -1,0 +1,9 @@
+.DS_Store
+*~
+*.swp
+.vscode/
+/.build
+/Packages
+xcuserdata/
+DerivedData/
+.swiftpm/
