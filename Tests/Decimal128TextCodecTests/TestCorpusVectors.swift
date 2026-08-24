@@ -14,13 +14,13 @@ import Testing
 ///
 ///   T1 DECODE  bid → text and dpd → text          (100, noncanonical)
 ///   T2 ENCODE  text → bid and text → dpd          (100)
-///   T3 PARSE   input text → bits, both formats    (parse, 945 rows)
+///   T3 PARSE   input text → bits, both formats    (parse, 1,052 rows)
 ///   T4 ERROR   malformed input text → rejection   (error, 133 rows)
 ///
 /// Plus the cross-format assertion: for every row both encodings must render to
 /// the same text. That is the strongest property the corpus encodes.
 ///
-/// The fifth table, `canonical`, is 84,764 rows of mostly common-path volume and
+/// The fifth table, `canonical`, is 84,783 rows of mostly common-path volume and
 /// runs as its own suite, `TestCanonicalCorpus`.
 @Suite
 struct TestCorpusVectors {
@@ -134,7 +134,7 @@ struct TestCorpusVectors {
     }
 }
 
-/// The full canonical table: 84,764 rows, read from the same submodule as the
+/// The full canonical table: 84,783 rows, read from the same submodule as the
 /// rest. It is a separate suite only because it is two orders of magnitude
 /// bigger than the other four put together, not because it is optional.
 @Suite
