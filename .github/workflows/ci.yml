@@ -27,10 +27,10 @@ jobs:
       # assertions rather than compiling them out.
       - name: Test (debug, assertions armed)
         run: swift test
-      # Release compiles them out, which is what a consumer gets. -enable-testing
-      # is what lets @testable import reach the declet primitives at -O.
+      # Release compiles them out, which is what a consumer gets. The tests reach
+      # only the four public functions, so no -enable-testing is needed.
       - name: Test (release, assertions off)
-        run: swift test -c release -Xswiftc -enable-testing
+        run: swift test -c release
 
   linux:
     name: swift on ubuntu
@@ -45,4 +45,4 @@ jobs:
       - name: Test (debug, assertions armed)
         run: swift test
       - name: Test (release, assertions off)
-        run: swift test -c release -Xswiftc -enable-testing
+        run: swift test -c release

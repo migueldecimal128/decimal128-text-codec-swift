@@ -2,7 +2,7 @@
 import Foundation
 import Testing
 
-@testable import Decimal128TextCodec
+import Decimal128TextCodec
 
 /// The four conformance tables, over the shared `text_bid_dpd` corpus.
 ///

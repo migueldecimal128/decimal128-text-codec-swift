@@ -80,7 +80,7 @@ Callers needing another rounding direction want the full library.
 ```
 swift build
 swift test
-swift test -c release -Xswiftc -enable-testing
+swift test -c release
 ```
 
 Swift 6, no dependencies. `Package.swift` declares a macOS 15 / iOS 18 floor,
@@ -93,8 +93,8 @@ finalizer's truncation step used to be — are live in every configuration. The
 internal-state `verify` assertions are armed for **debug builds only**, because
 a release consumer compiles this source into their own program and must not take
 a trap inside a library on data they do not control. Both configurations are
-tested; `-enable-testing` is what lets `@testable import` reach the declet
-primitives in a release build.
+tested, and neither needs `-enable-testing`: the suite reaches only the four
+public functions.
 
 ## Tests
 

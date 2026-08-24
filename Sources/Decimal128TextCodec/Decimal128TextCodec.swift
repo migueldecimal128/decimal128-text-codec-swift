@@ -1619,7 +1619,7 @@ public enum Decimal128TextCodec {
     ///
     /// Mapping: bit9..bit0 as `p q r s t u v w x y`. Handles non-canonical
     /// declets as well as canonical ones, per Cowlishaw's dpd2bcd.
-    internal static func dpdDecodeDeclet(_ declet: UInt64) -> UInt64 {
+    private static func dpdDecodeDeclet(_ declet: UInt64) -> UInt64 {
         verify(declet <= 1023)
 
         if (declet == 0) {
@@ -1674,7 +1674,7 @@ public enum Decimal128TextCodec {
     /// The inverse of ``dpdDecodeDeclet`` over canonical declets. A
     /// non-canonical declet decodes to a value that re-encodes to the canonical
     /// declet for that value, so `encode(decode(x)) == x` only for canonical `x`.
-    internal static func dpdEncodeDeclet(_ n: UInt64) -> UInt64 {
+    private static func dpdEncodeDeclet(_ n: UInt64) -> UInt64 {
         verify(n <= 999)
 
         if (n == 0) {
