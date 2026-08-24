@@ -98,23 +98,20 @@ primitives in a release build.
 
 ## Tests
 
-Four files, 13 tests in 4 suites.
+Three files, 12 tests in 3 suites.
 
 | file | suite | what it covers |
 |---|---|---|
 | `Tests/.../CorpusSupport.swift` | — | the corpus reader, the hex helpers, and the parse wrappers |
 | `Tests/.../TestCorpusVectors.swift` | `TestCorpusVectors` | the four conformance tables over the shared corpus — 2,552 rows, both directions, both formats |
 | | `TestCanonicalCorpus` | the full 84,783-row canonical table |
-| `Tests/.../TestBid128Parse.swift` | `TestBid128Parse` | hand-chosen BID parse vectors, including the parenthesised-NaN payloads the corpus cannot carry |
 | `Tests/.../TestDpdDeclet.swift` | `TestDpdDeclet` | the declet codec, exhaustively over all 1024 patterns |
 
 That is the whole suite, and the shape is deliberate: **every conformance vector
-comes from the shared corpus.** `TestBid128Parse` survives only because seven of
-its vectors are parenthesised-NaN payloads, which the `decimal128-c` engine
-rejects and so cannot author; when that divergence is resolved upstream those
-become corpus rows and the file goes. `TestDpdDeclet` survives because it needs
-no vectors at all — it enumerates the primitive's entire 1024-value domain, where
-no oracle exists or is required.
+comes from the shared corpus — there is no hand-written vector left in this
+repo.** `TestDpdDeclet` is the one test that holds data of its own, and it holds
+none: it enumerates the declet primitive's entire 1024-value domain, where no
+oracle exists or is required.
 
 The conformance vectors are read from `resources/text_bid_dpd`, where
 `resources` is the `decimal128-resources` submodule — the same mount every

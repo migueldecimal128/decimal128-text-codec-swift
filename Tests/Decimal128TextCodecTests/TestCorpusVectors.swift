@@ -14,8 +14,8 @@ import Testing
 ///
 ///   T1 DECODE  bid → text and dpd → text          (100, noncanonical)
 ///   T2 ENCODE  text → bid and text → dpd          (100)
-///   T3 PARSE   input text → bits, both formats    (parse, 1,052 rows)
-///   T4 ERROR   malformed input text → rejection   (error, 133 rows)
+///   T3 PARSE   input text → bits, both formats    (parse, 1,061 rows)
+///   T4 ERROR   malformed input text → rejection   (error, 173 rows)
 ///
 /// Plus the cross-format assertion: for every row both encodings must render to
 /// the same text. That is the strongest property the corpus encodes.
@@ -80,7 +80,7 @@ struct TestCorpusVectors {
     @Test("T3: input text parses to the expected bits in both formats")
     func parse() throws {
         let rows = try Corpus.load(Corpus.parse)
-        #expect(rows.count == 1052)
+        #expect(rows.count == 1061)
         for row in rows {
             let b = bidParse(row.text)
             #expect(b.error == nil, "parse line \(row.lineNumber): bid rejected <\(row.text)>: \(b.error ?? "")")
@@ -105,7 +105,7 @@ struct TestCorpusVectors {
     @Test("T4: malformed input is rejected identically by both formats")
     func error() throws {
         let rows = try Corpus.load(Corpus.error)
-        #expect(rows.count == 133)
+        #expect(rows.count == 173)
         for row in rows {
             let b = bidParse(row.text)
             let d = dpdParse(row.text)
