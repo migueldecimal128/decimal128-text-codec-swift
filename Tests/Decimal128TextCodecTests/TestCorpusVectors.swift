@@ -28,6 +28,7 @@ struct TestCorpusVectors {
     /// Every row: both encodings must render to the expected text, and
     /// therefore to each other.
     static func runDecodeTable(_ rows: [CorpusRow], _ label: String) {
+        var buf = [UInt8](repeating: 0, count: Decimal128TextCodec.MAX_LEN)
         for row in rows {
             let bidText = Decimal128TextCodec.bid128ToString(row.bid)
             let dpdText = Decimal128TextCodec.dpd128ToString(row.dpd)
@@ -35,6 +36,14 @@ struct TestCorpusVectors {
                     "\(label) line \(row.lineNumber): bid \(Hex.format32(row.bid)) rendered <\(bidText)>")
             #expect(dpdText == row.text,
                     "\(label) line \(row.lineNumber): dpd \(Hex.format32(row.dpd)) rendered <\(dpdText)>")
+            let bidLen = Decimal128TextCodec.bid128ToString(&buf, row.bid)
+            let bidBuf = String(decoding: buf[0..<bidLen], as: UTF8.self)
+            #expect(bidBuf == row.text,
+                    "\(label) line \(row.lineNumber): bid \(Hex.format32(row.bid)) into buffer <\(bidBuf)>")
+            let dpdLen = Decimal128TextCodec.dpd128ToString(&buf, row.dpd)
+            let dpdBuf = String(decoding: buf[0..<dpdLen], as: UTF8.self)
+            #expect(dpdBuf == row.text,
+                    "\(label) line \(row.lineNumber): dpd \(Hex.format32(row.dpd)) into buffer <\(dpdBuf)>")
         }
     }
 
