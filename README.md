@@ -98,19 +98,24 @@ primitives in a release build.
 
 ## Tests
 
-Two files, 12 tests in 3 suites.
+One file, 6 tests in 2 suites.
 
 | file | suite | what it covers |
 |---|---|---|
 | `Tests/.../TestCorpusVectors.swift` | `TestCorpusVectors` | the four conformance tables over the shared corpus — 2,601 rows, both directions, both formats. Also holds the corpus reader and the hex helpers, its only consumer. |
 | | `TestCanonicalCorpus` | the full 84,783-row canonical table |
-| `Tests/.../TestDpdDeclet.swift` | `TestDpdDeclet` | the declet codec, exhaustively over all 1024 patterns |
 
-That is the whole suite, and the shape is deliberate: **every conformance vector
-comes from the shared corpus — there is no hand-written vector left in this
-repo.** `TestDpdDeclet` is the one test that holds data of its own, and it holds
-none: it enumerates the declet primitive's entire 1024-value domain, where no
-oracle exists or is required.
+That is the whole suite, and the shape is deliberate: **every test vector in this
+repo comes from the shared corpus.** There is no hand-written table left, and
+nothing reaches past the four public functions.
+
+An exhaustive unit test of the DPD declet primitives used to sit here too. It was
+removed once instrumentation showed the corpus already drives all 1024 declet
+patterns through the decoder and all 1000 values through the encoder — the
+canonical table supplying the 1000 by sheer volume, and the noncanonical table's
+462 declet rows supplying the 24 patterns a canonical encoder never emits. What
+went with it is the *statement* that there are exactly 24: the corpus proves each
+one decodes correctly without asserting how many there are.
 
 The conformance vectors are read from `resources/text_bid_dpd`, where
 `resources` is the `decimal128-resources` submodule — the same mount every
