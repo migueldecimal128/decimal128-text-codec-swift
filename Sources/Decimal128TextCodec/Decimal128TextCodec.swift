@@ -46,8 +46,8 @@
 ///
 /// This type provides no arithmetic, no comparison and no field extraction. For
 /// the full IEEE 754-2019 decimal128 implementation — arithmetic, comparison,
-/// every rounding-direction attribute, IEEE status flags — see `decimal128-swift`
-/// at [decimal128.com](https://decimal128.com).
+/// every rounding-direction attribute, IEEE status flags — see
+/// https://decimal128.com.
 ///
 /// ## Rounding
 ///
@@ -354,207 +354,42 @@ public enum Decimal128TextCodec {
 
     /// Decode a BID128 bit pattern to its decimal character sequence.
     ///
-    /// Dispatches to specialized renderers based on the encoding's class:
-    /// Infinity, NaN (quiet or signaling, with optional payload), zero
-    /// (canonical or non-canonical), or finite non-zero. Field extraction
-    /// follows IEEE 754-2019 §3.5.2.
+    /// Renders through ``decodeBid128toBytes(_:_:_:)`` straight into the
+    /// String's own storage. Field extraction, class dispatch and every leaf
+    /// renderer live there; this exists only to hand back a `String`.
     private static func decodeBid128toString(_ bid128Hi: UInt64, _ bid128Lo: UInt64) -> String {
-        // IEEE754-2019 Table 3.6 -- Decimal interchange format parameters, p 23
-        let k = 128       // storage width in bits
-        let t = T_WIDTH   // trailing significand field width in bits
-        verify(1 + W5 + t == k)
-
-        // 1 + 17 + 110 == 128
-        // 1 bit for the sign
-        let sign = (bid128Hi & SIGN_BIT) != 0
-        // w5 bit combination field ... for bid128 0x1FFFF
-        let combination = Int((bid128Hi >> (t - 64)) & 0x1FFFF)
-        let coeffTHi = bid128Hi & COEFF_T_HI_MASK
-
-        let coeffHi: UInt64
-        let qExp: Int
-        if (combination >> (W5 - 2)) != 0b11 {
-            //  IEEE754-2019 3.5.2 c) 2) i) -- p 21
-            //   If G0 and G1 together are one of 00, 01, or 10, then the biased
-            //   exponent E is formed from G0 through Gw+1 and the significand
-            //   is formed from bits Gw+2 through the end of the encoding (including T).
-            //
-            // w+5=17 w=12 Gw+1=G13 Gw+2=G14
-            // the top 14 bits of the combination field represent the biased exponent ...
-            let biasedExponentE = combination >> 3
-            qExp = biasedExponentE - BIAS
-            // ... and the bottom 3 bits are the most significant bits of the significand
-            coeffHi = UInt64(combination & 0x07)
-        } else if (combination >> (W5 - 4)) != 0b1111 {
-            // IEEE754-2019 3.5.2 c) 2) ii) -- p 21
-            //  If G0 and G1 together are 11 and G2 and G3 together are one
-            //  of 00, 01, or 10, then the biased exponent E is formed from
-            //  G2 through Gw+3 and the significand is formed by prefixing
-            //  the 4 bits (8 + Gw+4) to T.
-            let biasedExponentE = (combination >> 1) & ((1 << (W5 - 5 + 2)) - 1)
-            qExp = biasedExponentE - BIAS
-            coeffHi = 8 + UInt64(combination & 1)
-        } else if (combination >> (W5 - 5)) == 0b11110 {
-            // if the top 5 bits are 0b11110 then Infinity
-            return infString(sign)
-        } else {
-            // if the top 5 bits are 0b11111 then NaN,
-            // with the next bit determining signaling NaN
-            verify((combination >> (W5 - 5)) == 0b11111)
-            let isSignaling = ((combination >> (W5 - 6)) & 1) != 0
-            return nanString(sign, isSignaling, coeffTHi, bid128Lo)
+        return String(unsafeUninitializedCapacity: MAX_LEN) { buf in
+            decodeBid128toBytes(buf, bid128Hi, bid128Lo)
         }
-
-        let dw1 = (coeffHi << (t - 64)) | coeffTHi
-        let dw0 = bid128Lo
-        // IEEE754-2019 3.5.2 p21
-        //  If the value exceeds the maximum, the significand c is
-        //  non-canonical and the value used for c is zero.
-        if (dw1 | dw0) == 0 ||
-            MAXX_COEFF_34_HI < dw1 ||
-            (dw1 == MAXX_COEFF_34_HI && (MAXX_COEFF_34_LO - 1) < dw0) {
-            return zerString(sign, qExp)
-        }
-        return fnzString(sign, qExp, dw1, dw0)
     }
 
-    /// Unpack a DPD128 encoding and hand the pieces to the shared renderers.
+    /// Decode a DPD128 bit pattern to its decimal character sequence.
     ///
-    /// The peer of ``decodeBid128toString(_:_:)``: both reduce an encoding to
-    /// `(sign, qExp, coefficient)` and then dispatch to the same four renderers,
-    /// which have never seen an interchange format.
+    /// The peer of ``decodeBid128toString(_:_:)``, and the same arrangement:
+    /// all the work is ``decodeDpd128toBytes(_:_:_:)``; this only wraps the
+    /// bytes it wrote.
     private static func decodeDpd128toString(_ dpd128Hi: UInt64, _ dpd128Lo: UInt64) -> String {
-        let w = 12        // exponent continuation width
-        let t = T_WIDTH   // trailing significand field width in bits
-
-        let sign = (dpd128Hi & SIGN_BIT) != 0
-        let combination = Int((dpd128Hi >> (t - 64)) & 0x1FFFF)
-        // in DPD the low w bits of the biased exponent always sit at the bottom of G
-        let expContinuation = combination & 0x0FFF
-
-        let d0: UInt64
-        let qExp: Int
-        var isNaN = false
-        var isSignaling = false
-
-        if (combination >> (W5 - 2)) != 0b11 {
-            // G0G1 is 00, 01 or 10: leading digit 0..7, exponent MSBs in G0G1
-            let expMSB = combination >> (W5 - 2)
-            qExp = ((expMSB << w) | expContinuation) - BIAS
-            d0 = UInt64((combination >> w) & 0b111)
-        } else if (combination >> (W5 - 4)) != 0b1111 {
-            // G0G1 is 11 and G2G3 is not 11: leading digit 8..9, exponent MSBs in G2G3
-            let expMSB = (combination >> (W5 - 4)) & 0b11
-            qExp = ((expMSB << w) | expContinuation) - BIAS
-            d0 = 8 + UInt64((combination >> w) & 0b1)
-        } else if (combination >> (W5 - 5)) == 0b11110 {
-            return infString(sign)
-        } else {
-            verify((combination >> (W5 - 5)) == 0b11111)
-            isNaN = true
-            isSignaling = ((combination >> (W5 - 6)) & 1) != 0
-            d0 = 0
-            qExp = 0
-        }
-
-        // Rebuild the binary coefficient from the declets. The leading digit
-        // rides along as a sixth declet of the high group: values 0..9 encode
-        // to themselves as a declet, so it decodes back unchanged.
-        let decletsHi = (d0 << 50) | ((dpd128Hi & 0x3FFF_FFFF_FFFF) << 4) | (dpd128Lo >> 60)
-        let decletsLo = dpd128Lo & 0x0FFF_FFFF_FFFF_FFFF // low 60 bits, six declets
-        let binHi = binFromDeclets(decletsHi)
-        let binLo = binFromDeclets(decletsLo)
-
-        let dw1: UInt64
-        let dw0: UInt64
-        if binHi == 0 {
-            dw1 = 0
-            dw0 = binLo
-        } else {
-            // binHi * 10^18 + binLo is a genuine 128-bit product: the low word
-            // is the wrapping sum, and the carry out of it feeds the high word.
-            dw0 = (binHi &* TEN_POW_18) &+ binLo
-            let carry: UInt64 = dw0 < binLo ? 1 : 0
-            dw1 = unsignedMulHi(binHi, TEN_POW_18) &+ carry
-        }
-
-        if isNaN {
-            return nanString(sign, isSignaling, dw1, dw0)
-        }
-        if (dw1 | dw0) == 0 {
-            return zerString(sign, qExp)
-        }
-        return fnzString(sign, qExp, dw1, dw0)
-    }
-
-    private static func infString(_ sign: Bool) -> String {
-        // small-form strings: no allocation, no refcount
-        return sign ? "-Infinity" : "Infinity"
-    }
-
-    private static func nanString(_ sign: Bool, _ isSignaling: Bool,
-                                  _ payloadHi: UInt64, _ payloadLo: UInt64) -> String {
-        if (payloadHi | payloadLo) == 0 ||
-            // non canonical IEEE 754-2019 3.5.2 c) 2)
-            MAX_PAYLOAD_HI < payloadHi ||
-            (payloadHi == MAX_PAYLOAD_HI && MAX_PAYLOAD_LO < payloadLo) {
-            // a small-form string, so a bare NaN costs no allocation
-            if !isSignaling {
-                return sign ? "-NaN" : "NaN"
-            }
-            return sign ? "-sNaN" : "sNaN"
-        }
         return String(unsafeUninitializedCapacity: MAX_LEN) { buf in
-            nanBytes(buf, sign, isSignaling, payloadHi, payloadLo)
-        }
-    }
-
-    private static let ZEROS = [
-        "0", "0.0", "0.00", "0.000", "0.0000", "0.00000", "0.000000", "",
-        "-0", "-0.0", "-0.00", "-0.000", "-0.0000", "-0.00000", "-0.000000", "",
-    ]
-
-    private static func zerString(_ sign: Bool, _ qExp: Int) -> String {
-        if qExp <= 0 && qExp >= -6 {
-            // Small-form strings, so a plain-form zero costs no allocation. The
-            // doubled table is deliberate here in a way it is not in the byte
-            // renderers: it returns a constant rather than feeding a copy.
-            let signBit = sign ? 1 : 0
-            let index = -qExp + (signBit << 3)
-            return ZEROS[index & 0x0F]
-        }
-        return String(unsafeUninitializedCapacity: MAX_LEN) { buf in
-            zerBytes(buf, sign, qExp)
-        }
-    }
-
-    /// Format a finite non-zero value, dispatching to one of three forms based
-    /// on the quantum exponent and the value's magnitude:
-    ///
-    ///  - integer notation when `qExp == 0`
-    ///  - fixed-point notation with a radix point when the value would naturally
-    ///    express with at most 6 leading zeros after the point
-    ///  - normalized scientific notation otherwise
-    ///
-    /// The 6-zero threshold is the GDAS `to-scientific-string` rule, which
-    /// prefers fixed-point form near unity over scientific form.
-    private static func fnzString(_ sign: Bool, _ qExp: Int, _ dw1: UInt64, _ dw0: UInt64) -> String {
-        return String(unsafeUninitializedCapacity: MAX_LEN) { buf in
-            fnzBytes(buf, sign, qExp, dw1, dw0)
+            decodeDpd128toBytes(buf, dpd128Hi, dpd128Lo)
         }
     }
 
     // ----------------------------------------------------------------------
     // Rendering into a buffer
     //
-    // The renderers proper. Every form is produced here, into a buffer the
-    // caller owns. The String-returning peers above are thin wrappers: they
-    // short-circuit the three constants -- "Infinity", a bare NaN and every
-    // plain-form zero, all of which are 15 bytes or fewer and so are small-form
-    // strings that cost neither an allocation nor a retain -- and otherwise
-    // build straight into a String's own storage with
-    // `String(unsafeUninitializedCapacity:)`. That is one allocation where the
-    // earlier shape allocated an intermediate Array as well.
+    // The renderers proper, and the only ones. Every form is produced here,
+    // into a buffer the caller owns; the two String entry points wrap these
+    // with `String(unsafeUninitializedCapacity:)`, which builds straight into
+    // the String's own storage.
+    //
+    // A set of String-returning peers used to sit above these to short-circuit
+    // three constants -- "Infinity", a bare NaN and every plain-form zero, all
+    // 15 bytes or fewer and so small-form strings costing neither an allocation
+    // nor a retain. Keeping them meant a second copy of the field extraction
+    // and class dispatch per encoding, kept in step only by the corpus running
+    // both forms past the same expected text. One renderer per encoding is
+    // worth more than the constants: a capacity of MAX_LEN is past the
+    // small-form limit, so every String result now allocates.
     //
     // None of the optional leading characters live in the string data. The
     // sign, and the `s` that marks a signaling NaN, are each written
