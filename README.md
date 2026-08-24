@@ -98,12 +98,11 @@ primitives in a release build.
 
 ## Tests
 
-Three files, 12 tests in 3 suites.
+Two files, 12 tests in 3 suites.
 
 | file | suite | what it covers |
 |---|---|---|
-| `Tests/.../CorpusSupport.swift` | — | the corpus reader, the hex helpers, and the parse wrappers |
-| `Tests/.../TestCorpusVectors.swift` | `TestCorpusVectors` | the four conformance tables over the shared corpus — 2,552 rows, both directions, both formats |
+| `Tests/.../TestCorpusVectors.swift` | `TestCorpusVectors` | the four conformance tables over the shared corpus — 2,601 rows, both directions, both formats. Also holds the corpus reader and the hex helpers, its only consumer. |
 | | `TestCanonicalCorpus` | the full 84,783-row canonical table |
 | `Tests/.../TestDpdDeclet.swift` | `TestDpdDeclet` | the declet codec, exhaustively over all 1024 patterns |
 
