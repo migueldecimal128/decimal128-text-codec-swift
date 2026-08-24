@@ -24,16 +24,6 @@ enum Hex {
         let s = String(v, radix: 16, uppercase: true)
         return String(repeating: "0", count: 32 - s.count) + s
     }
-
-    /// Parse the `[hi,lo]` spelling the reference's own vector tables use.
-    static func parseBracketed(_ s: String) -> UInt128 {
-        let inner = s.dropFirst().dropLast()
-        let parts = inner.split(separator: ",")
-        precondition(parts.count == 2, "bad bracketed hex: \(s)")
-        let hi = UInt64(parts[0], radix: 16)!
-        let lo = UInt64(parts[1], radix: 16)!
-        return (UInt128(hi) << 64) | UInt128(lo)
-    }
 }
 
 // ---------------------------------------------------------------------------
@@ -208,16 +198,3 @@ func dpdParse(_ text: String) -> (bits: UInt128, error: String?) {
     let err = Decimal128TextCodec.dpd128Parse(&bits, text)
     return (bits, err)
 }
-
-/// The canonical positive quiet NaN, which is what both parse functions write
-/// on failure and the same bit pattern in both formats.
-let canonicalQuietNaN: UInt128 = UInt128(0x7C00_0000_0000_0000) << 64
-
-/// Assemble an encoding from its two words, the way the reference's tables
-/// spell one.
-func words(_ hi: UInt64, _ lo: UInt64) -> UInt128 {
-    return (UInt128(hi) << 64) | UInt128(lo)
-}
-
-func hiWord(_ v: UInt128) -> UInt64 { UInt64(truncatingIfNeeded: v >> 64) }
-func loWord(_ v: UInt128) -> UInt64 { UInt64(truncatingIfNeeded: v) }
