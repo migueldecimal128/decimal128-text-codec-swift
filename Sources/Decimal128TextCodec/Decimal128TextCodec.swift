@@ -32,7 +32,7 @@
 //    Swift returns tuples, so neither the aliasing nor the scratch reuse needs
 //    to exist.
 //
-// Everything reachable from outside is the four functions on the type below;
+// Everything reachable from outside is the functions on the type below;
 // the rest is `private`, or `internal` where a test needs to reach it.
 
 /// Thin codec between the two IEEE 754-2019 decimal128 interchange encodings —
@@ -74,7 +74,7 @@
 ///
 /// ## Thread safety
 ///
-/// All four functions are pure and safe for concurrent use.
+/// All functions are pure and safe for concurrent use.
 public enum Decimal128TextCodec {
 
     // ------------------------------------------------------------------
@@ -102,7 +102,9 @@ public enum Decimal128TextCodec {
     /// - Parameter bits: the BID128 encoding.
     /// - Returns: the decimal character sequence for `bits`.
     public static func bid128ToString(_ bits: UInt128) -> String {
-        return decodeBid128toString(hiWord(bits), loWord(bits))
+        return String(unsafeUninitializedCapacity: MAX_LEN) { buf in
+            decodeBid128toBytes(buf, hiWord(bits), loWord(bits))
+        }
     }
 
     /// Render a DPD128 encoding as a decimal character sequence.
@@ -121,17 +123,19 @@ public enum Decimal128TextCodec {
     /// - Parameter bits: the DPD128 encoding.
     /// - Returns: the decimal character sequence for `bits`.
     public static func dpd128ToString(_ bits: UInt128) -> String {
-        return decodeDpd128toString(hiWord(bits), loWord(bits))
+        return String(unsafeUninitializedCapacity: MAX_LEN) { buf in
+            decodeDpd128toBytes(buf, hiWord(bits), loWord(bits))
+        }
     }
 
     /// The exact bound on a rendered decimal128, in bytes.
     ///
     /// The widest scientific form `-9.999…E-6143` is 1 sign, 1 digit, 1 radix
     /// point, 33 digits, 1 `E`, 1 sign and 4 exponent digits; the widest plain
-    /// form `-0.000000999…` is 1 sign, 1 zero, 1 radix point, 6 leading zeros
-    /// and 34 digits. Both reach exactly 42.
+    /// form `-0.00000999…` is 1 sign, 1 zero, 1 radix point, 5 leading zeros
+    /// and 34 digits. Each form reaches exactly 42.
     ///
-    /// A buffer passed to ``bid128ToString(_:_:)-buffer`` must be at least this
+    /// A buffer passed to ``bid128ToAscii(_:_:)`` must be at least this
     /// long. The same number, and the same meaning, as `MAX_LEN` in the Rust
     /// port, `MaxLen` in Go and `max_len` in Zig; the C port's
     /// `D128TEXT_MAX_LEN` is one larger because it writes a NUL and these do
@@ -156,7 +160,7 @@ public enum Decimal128TextCodec {
     ///   - out: the destination, at least ``MAX_LEN`` bytes.
     ///   - bits: the BID128 encoding.
     /// - Returns: the number of bytes written.
-    public static func bid128ToString(_ out: inout [UInt8], _ bits: UInt128) -> Int {
+    public static func bid128ToAscii(_ out: inout [UInt8], _ bits: UInt128) -> Int {
         return out.withUnsafeMutableBufferPointer { buf in
             decodeBid128toBytes(buf, hiWord(bits), loWord(bits))
         }
@@ -165,14 +169,14 @@ public enum Decimal128TextCodec {
     /// Render a DPD128 encoding into a caller-supplied buffer, allocating
     /// nothing.
     ///
-    /// The peer of ``bid128ToString(_:_:)-buffer``, with the same buffer
+    /// The peer of ``bid128ToAscii(_:_:)``, with the same buffer
     /// contract and the same output for peer encodings of a value.
     ///
     /// - Parameters:
     ///   - out: the destination, at least ``MAX_LEN`` bytes.
     ///   - bits: the DPD128 encoding.
     /// - Returns: the number of bytes written.
-    public static func dpd128ToString(_ out: inout [UInt8], _ bits: UInt128) -> Int {
+    public static func dpd128ToAscii(_ out: inout [UInt8], _ bits: UInt128) -> Int {
         return out.withUnsafeMutableBufferPointer { buf in
             decodeDpd128toBytes(buf, hiWord(bits), loWord(bits))
         }
@@ -348,32 +352,6 @@ public enum Decimal128TextCodec {
     private static let ascii_dot: UInt8 = 0x2E
     private static let ascii_E: UInt8 = 0x45
 
-    // ==================================================================
-    // MARK: - Decode: encoding -> text
-    // ==================================================================
-
-    /// Decode a BID128 bit pattern to its decimal character sequence.
-    ///
-    /// Renders through ``decodeBid128toBytes(_:_:_:)`` straight into the
-    /// String's own storage. Field extraction, class dispatch and every leaf
-    /// renderer live there; this exists only to hand back a `String`.
-    private static func decodeBid128toString(_ bid128Hi: UInt64, _ bid128Lo: UInt64) -> String {
-        return String(unsafeUninitializedCapacity: MAX_LEN) { buf in
-            decodeBid128toBytes(buf, bid128Hi, bid128Lo)
-        }
-    }
-
-    /// Decode a DPD128 bit pattern to its decimal character sequence.
-    ///
-    /// The peer of ``decodeBid128toString(_:_:)``, and the same arrangement:
-    /// all the work is ``decodeDpd128toBytes(_:_:_:)``; this only wraps the
-    /// bytes it wrote.
-    private static func decodeDpd128toString(_ dpd128Hi: UInt64, _ dpd128Lo: UInt64) -> String {
-        return String(unsafeUninitializedCapacity: MAX_LEN) { buf in
-            decodeDpd128toBytes(buf, dpd128Hi, dpd128Lo)
-        }
-    }
-
     // ----------------------------------------------------------------------
     // Rendering into a buffer
     //
@@ -400,8 +378,12 @@ public enum Decimal128TextCodec {
 
     private static let ascii_s: UInt8 = 0x73
 
-    /// The peer of ``decodeBid128toString(_:_:)``, writing into the caller's
-    /// buffer. Identical field extraction; only the four leaf calls differ.
+    /// Render a BID128 encoding into the caller's buffer.
+    ///
+    /// Field extraction follows IEEE 754-2019 §3.5.2; the class it lands on --
+    /// Infinity, NaN (quiet or signaling, with optional payload), zero
+    /// (canonical or non-canonical), or finite non-zero -- picks the leaf
+    /// renderer. ``bid128ToString(_:)`` wraps what this writes.
     private static func decodeBid128toBytes(_ ascii: UnsafeMutableBufferPointer<UInt8>,
                                             _ bid128Hi: UInt64, _ bid128Lo: UInt64) -> Int {
         // IEEE754-2019 Table 3.6 -- Decimal interchange format parameters, p 23
@@ -463,8 +445,11 @@ public enum Decimal128TextCodec {
         return fnzBytes(ascii, sign, qExp, dw1, dw0)
     }
 
-    /// The peer of ``decodeDpd128toString(_:_:)``, writing into the caller's
-    /// buffer. Identical field extraction; only the four leaf calls differ.
+    /// Render a DPD128 encoding into the caller's buffer.
+    ///
+    /// The peer of ``decodeBid128toBytes(_:_:_:)``: both reduce an encoding to
+    /// `(sign, qExp, coefficient)` and then dispatch to the same leaf
+    /// renderers, which have never seen an interchange format.
     private static func decodeDpd128toBytes(_ ascii: UnsafeMutableBufferPointer<UInt8>,
                                             _ dpd128Hi: UInt64, _ dpd128Lo: UInt64) -> Int {
         let w = 12        // exponent continuation width

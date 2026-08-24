@@ -36,11 +36,11 @@ struct TestCorpusVectors {
                     "\(label) line \(row.lineNumber): bid \(Hex.format32(row.bid)) rendered <\(bidText)>")
             #expect(dpdText == row.text,
                     "\(label) line \(row.lineNumber): dpd \(Hex.format32(row.dpd)) rendered <\(dpdText)>")
-            let bidLen = Decimal128TextCodec.bid128ToString(&buf, row.bid)
+            let bidLen = Decimal128TextCodec.bid128ToAscii(&buf, row.bid)
             let bidBuf = String(decoding: buf[0..<bidLen], as: UTF8.self)
             #expect(bidBuf == row.text,
                     "\(label) line \(row.lineNumber): bid \(Hex.format32(row.bid)) into buffer <\(bidBuf)>")
-            let dpdLen = Decimal128TextCodec.dpd128ToString(&buf, row.dpd)
+            let dpdLen = Decimal128TextCodec.dpd128ToAscii(&buf, row.dpd)
             let dpdBuf = String(decoding: buf[0..<dpdLen], as: UTF8.self)
             #expect(dpdBuf == row.text,
                     "\(label) line \(row.lineNumber): dpd \(Hex.format32(row.dpd)) into buffer <\(dpdBuf)>")
