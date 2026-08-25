@@ -1,39 +1,10 @@
 // SPDX-License-Identifier: MIT
 //
-// decimal128-text-codec-swift
-//
-// Ported from decimal128-text-codec-kotlin (`Decimal128TextCodec.kt` @ 3a99efc),
-// which is the reference implementation for the family, with
-// decimal128-text-codec-c consulted where a systems language had already
-// answered a question Kotlin never had to ask. The shape follows the reference
-// closely enough to read side by side; where Swift differs, the difference is
-// noted at the point it occurs. The four deliberate ones:
-//
-//  - The public boundary is `UInt128`, not the reference's pair of `Long`s.
-//    Swift has a native 128-bit unsigned integer, so a caller holds one value
-//    rather than two words plus a convention about which is which. The
-//    internals still work in `dw1`/`dw0` `UInt64` pairs, exactly as the
-//    reference does: the split happens once on entry and the join once on exit.
-//
-//  - Dwords are `UInt64`, not the reference's signed `Long`. The Kotlin carries
-//    `unsignedMulHi` / `unsignedLT` / `ushr` only because the JVM has no
-//    unsigned 64-bit type; here `>>`, `<` and `multipliedFullWidth` say it
-//    directly.
-//
-//  - Swift traps on overflow where Kotlin's arithmetic wraps, so every
-//    arithmetic operator in this file is spelled `&+` / `&-` / `&*`. The
-//    reference is modular throughout and so are the other seven ports; matching
-//    them exactly is also what keeps a release consumer from taking a trap
-//    inside a library on data they do not control. The sites where a value is
-//    allowed to wrap and then be discarded still carry a note saying why the
-//    wrapped value is harmless. Division stays checked: Swift has no wrapping
-//    `/`, and no divisor reachable here is zero.
-//
-//  - The finalize chain returns its result instead of writing through an
-//    out-parameter. The reference threads a `LongArray` that doubles as scratch
-//    for the divide kernel; the C port replaced it with `uint64_t *` pairs.
-//    Swift returns tuples, so neither the aliasing nor the scratch reuse needs
-//    to exist.
+// Every arithmetic operator in this file is wrapping -- `&+` / `&-` / `&*`.
+// Swift traps on overflow, and this codec's arithmetic is modular by design;
+// the sites where a value is allowed to wrap and then be discarded carry a note
+// saying why the wrapped value is harmless. Division stays checked: Swift has no
+// wrapping `/`, and no divisor reachable here is zero.
 //
 // Everything reachable from outside is the functions on the type below;
 // the rest is `private`, or `internal` where a test needs to reach it.
