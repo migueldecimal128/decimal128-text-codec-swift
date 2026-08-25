@@ -20,11 +20,14 @@
 //    unsigned 64-bit type; here `>>`, `<` and `multipliedFullWidth` say it
 //    directly.
 //
-//  - Swift arithmetic traps on overflow where Kotlin's wraps. Every site the
-//    reference relies on wrapping is spelled `&+` / `&*` / `&-` here, and each
-//    one carries a note saying why the wrap is the intended arithmetic. Every
-//    other site is left checked on purpose, so a translation error surfaces as
-//    a trap rather than as a wrong answer.
+//  - Swift traps on overflow where Kotlin's arithmetic wraps, so every
+//    arithmetic operator in this file is spelled `&+` / `&-` / `&*`. The
+//    reference is modular throughout and so are the other seven ports; matching
+//    them exactly is also what keeps a release consumer from taking a trap
+//    inside a library on data they do not control. The sites where a value is
+//    allowed to wrap and then be discarded still carry a note saying why the
+//    wrapped value is harmless. Division stays checked: Swift has no wrapping
+//    `/`, and no divisor reachable here is zero.
 //
 //  - The finalize chain returns its result instead of writing through an
 //    out-parameter. The reference threads a `LongArray` that doubles as scratch
@@ -448,7 +451,7 @@ public enum Decimal128TextCodec {
     /// `(1 shl 46) - 1`. Swift's shift is not a masking shift -- `1 << 110` on a
     /// `UInt64` is 0, and subtracting 1 from that traps -- so the intended
     /// 46-bit mask is spelled out.
-    private static let COEFF_T_HI_MASK: UInt64 = (UInt64(1) << (110 - 64)) - 1
+    private static let COEFF_T_HI_MASK: UInt64 = (UInt64(1) << (110 &- 64)) &- 1
 
     // 10^34, one past the largest coefficient; maxx = max eXclusive
     private static let MAXX_COEFF_34_HI: UInt64 = 0x0001_ED09_BEAD_87C0
@@ -460,7 +463,7 @@ public enum Decimal128TextCodec {
 
     // 33 nines -- the largest canonical NaN payload
     private static let MAX_PAYLOAD_HI = MIN_PRECISION_34_COEFF_HI
-    private static let MAX_PAYLOAD_LO = MIN_PRECISION_34_COEFF_LO - 1
+    private static let MAX_PAYLOAD_LO = MIN_PRECISION_34_COEFF_LO &- 1
 
     private static let SIGN_BIT: UInt64 = 0x8000_0000_0000_0000
     private static let INF_PATTERN_HI: UInt64 = 0x7800_0000_0000_0000
@@ -514,18 +517,18 @@ public enum Decimal128TextCodec {
         // IEEE754-2019 Table 3.6 -- Decimal interchange format parameters, p 23
         let k = 128       // storage width in bits
         let t = T_WIDTH   // trailing significand field width in bits
-        verify(1 + W5 + t == k)
+        verify(1 &+ W5 &+ t == k)
 
         // 1 + 17 + 110 == 128
         // 1 bit for the sign
         let sign = (bid128Hi & SIGN_BIT) != 0
         // w5 bit combination field ... for bid128 0x1FFFF
-        let combination = Int((bid128Hi >> (t - 64)) & 0x1FFFF)
+        let combination = Int((bid128Hi >> (t &- 64)) & 0x1FFFF)
         let coeffTHi = bid128Hi & COEFF_T_HI_MASK
 
         let coeffHi: UInt64
         let qExp: Int
-        if (combination >> (W5 - 2)) != 0b11 {
+        if (combination >> (W5 &- 2)) != 0b11 {
             //  IEEE754-2019 3.5.2 c) 2) i) -- p 21
             //   If G0 and G1 together are one of 00, 01, or 10, then the biased
             //   exponent E is formed from G0 through Gw+1 and the significand
@@ -534,37 +537,37 @@ public enum Decimal128TextCodec {
             // w+5=17 w=12 Gw+1=G13 Gw+2=G14
             // the top 14 bits of the combination field represent the biased exponent ...
             let biasedExponentE = combination >> 3
-            qExp = biasedExponentE - BIAS
+            qExp = biasedExponentE &- BIAS
             // ... and the bottom 3 bits are the most significant bits of the significand
             coeffHi = UInt64(combination & 0x07)
-        } else if (combination >> (W5 - 4)) != 0b1111 {
+        } else if (combination >> (W5 &- 4)) != 0b1111 {
             // IEEE754-2019 3.5.2 c) 2) ii) -- p 21
             //  If G0 and G1 together are 11 and G2 and G3 together are one
             //  of 00, 01, or 10, then the biased exponent E is formed from
             //  G2 through Gw+3 and the significand is formed by prefixing
             //  the 4 bits (8 + Gw+4) to T.
-            let biasedExponentE = (combination >> 1) & ((1 << (W5 - 5 + 2)) - 1)
-            qExp = biasedExponentE - BIAS
-            coeffHi = 8 + UInt64(combination & 1)
-        } else if (combination >> (W5 - 5)) == 0b11110 {
+            let biasedExponentE = (combination >> 1) & ((1 << (W5 &- 5 &+ 2)) &- 1)
+            qExp = biasedExponentE &- BIAS
+            coeffHi = 8 &+ UInt64(combination & 1)
+        } else if (combination >> (W5 &- 5)) == 0b11110 {
             // if the top 5 bits are 0b11110 then Infinity
             return infBytes(ascii, sign)
         } else {
             // if the top 5 bits are 0b11111 then NaN,
             // with the next bit determining signaling NaN
-            verify((combination >> (W5 - 5)) == 0b11111)
-            let isSignaling = ((combination >> (W5 - 6)) & 1) != 0
+            verify((combination >> (W5 &- 5)) == 0b11111)
+            let isSignaling = ((combination >> (W5 &- 6)) & 1) != 0
             return nanBytes(ascii, sign, isSignaling, coeffTHi, bid128Lo)
         }
 
-        let dw1 = (coeffHi << (t - 64)) | coeffTHi
+        let dw1 = (coeffHi << (t &- 64)) | coeffTHi
         let dw0 = bid128Lo
         // IEEE754-2019 3.5.2 p21
         //  If the value exceeds the maximum, the significand c is
         //  non-canonical and the value used for c is zero.
         if (dw1 | dw0) == 0 ||
             MAXX_COEFF_34_HI < dw1 ||
-            (dw1 == MAXX_COEFF_34_HI && (MAXX_COEFF_34_LO - 1) < dw0) {
+            (dw1 == MAXX_COEFF_34_HI && (MAXX_COEFF_34_LO &- 1) < dw0) {
             return zerBytes(ascii, sign, qExp)
         }
         return fnzBytes(ascii, sign, qExp, dw1, dw0)
@@ -581,7 +584,7 @@ public enum Decimal128TextCodec {
         let t = T_WIDTH   // trailing significand field width in bits
 
         let sign = (dpd128Hi & SIGN_BIT) != 0
-        let combination = Int((dpd128Hi >> (t - 64)) & 0x1FFFF)
+        let combination = Int((dpd128Hi >> (t &- 64)) & 0x1FFFF)
         // in DPD the low w bits of the biased exponent always sit at the bottom of G
         let expContinuation = combination & 0x0FFF
 
@@ -590,22 +593,22 @@ public enum Decimal128TextCodec {
         var isNaN = false
         var isSignaling = false
 
-        if (combination >> (W5 - 2)) != 0b11 {
+        if (combination >> (W5 &- 2)) != 0b11 {
             // G0G1 is 00, 01 or 10: leading digit 0..7, exponent MSBs in G0G1
-            let expMSB = combination >> (W5 - 2)
-            qExp = ((expMSB << w) | expContinuation) - BIAS
+            let expMSB = combination >> (W5 &- 2)
+            qExp = ((expMSB << w) | expContinuation) &- BIAS
             d0 = UInt64((combination >> w) & 0b111)
-        } else if (combination >> (W5 - 4)) != 0b1111 {
+        } else if (combination >> (W5 &- 4)) != 0b1111 {
             // G0G1 is 11 and G2G3 is not 11: leading digit 8..9, exponent MSBs in G2G3
-            let expMSB = (combination >> (W5 - 4)) & 0b11
-            qExp = ((expMSB << w) | expContinuation) - BIAS
-            d0 = 8 + UInt64((combination >> w) & 0b1)
-        } else if (combination >> (W5 - 5)) == 0b11110 {
+            let expMSB = (combination >> (W5 &- 4)) & 0b11
+            qExp = ((expMSB << w) | expContinuation) &- BIAS
+            d0 = 8 &+ UInt64((combination >> w) & 0b1)
+        } else if (combination >> (W5 &- 5)) == 0b11110 {
             return infBytes(ascii, sign)
         } else {
-            verify((combination >> (W5 - 5)) == 0b11111)
+            verify((combination >> (W5 &- 5)) == 0b11111)
             isNaN = true
-            isSignaling = ((combination >> (W5 - 6)) & 1) != 0
+            isSignaling = ((combination >> (W5 &- 6)) & 1) != 0
             d0 = 0
             qExp = 0
         }
@@ -655,9 +658,9 @@ public enum Decimal128TextCodec {
         let signLen = sign ? 1 : 0
         ascii[0] = ascii_minus // overwritten by the 'I' when unsigned
         for i in 0..<INFINITY_TEXT.count {
-            ascii[signLen + i] = INFINITY_TEXT[i]
+            ascii[signLen &+ i] = INFINITY_TEXT[i]
         }
-        return signLen + INFINITY_TEXT.count
+        return signLen &+ INFINITY_TEXT.count
     }
 
     private static func nanBytes(_ ascii: UnsafeMutableBufferPointer<UInt8>, _ sign: Bool,
@@ -665,12 +668,12 @@ public enum Decimal128TextCodec {
                                  _ payloadHi: UInt64, _ payloadLo: UInt64) -> Int {
         let signLen = sign ? 1 : 0
         let sLen = isSignaling ? 1 : 0
-        let wordOff = signLen + sLen
-        let baseLen = wordOff + NAN_TEXT.count
+        let wordOff = signLen &+ sLen
+        let baseLen = wordOff &+ NAN_TEXT.count
         ascii[0] = ascii_minus   // overwritten by the 's' or the 'N' when unsigned
         ascii[signLen] = ascii_s // overwritten by the 'N' when quiet
         for i in 0..<NAN_TEXT.count {
-            ascii[wordOff + i] = NAN_TEXT[i]
+            ascii[wordOff &+ i] = NAN_TEXT[i]
         }
         if (payloadHi | payloadLo) == 0 ||
             // non canonical IEEE 754-2019 3.5.2 c) 2)
@@ -680,7 +683,7 @@ public enum Decimal128TextCodec {
         }
         let digitLen = calcDigitLen128(payloadHi, payloadLo)
         u128ToAscii(digitLen, payloadHi, payloadLo, ascii, baseLen)
-        return baseLen + digitLen
+        return baseLen &+ digitLen
     }
 
     private static func zerBytes(_ ascii: UnsafeMutableBufferPointer<UInt8>, _ sign: Bool,
@@ -689,11 +692,11 @@ public enum Decimal128TextCodec {
         ascii[0] = ascii_minus // overwritten by the '0' when unsigned
         if qExp <= 0 && qExp >= -6 {
             let k = -qExp
-            let zeroLen = (k == 0) ? 1 : k + 2
+            let zeroLen = (k == 0) ? 1 : k &+ 2
             for i in 0..<zeroLen {
-                ascii[signLen + i] = PLAIN_ZERO[i]
+                ascii[signLen &+ i] = PLAIN_ZERO[i]
             }
-            return signLen + zeroLen
+            return signLen &+ zeroLen
         }
         // A positive exponent needs an explicit '+'; a negative one prints its
         // own '-' from appendIntBytes. Write the '+' unconditionally and let
@@ -703,12 +706,12 @@ public enum Decimal128TextCodec {
         // nothing for a positive one, and because the plain form above has
         // already taken every qExp in [-6, 0], so this branch never sees zero.
         let plusLen = (qExp > 0) ? 1 : 0
-        let baseLen = signLen + ZERO_EXP_TEXT.count + plusLen
+        let baseLen = signLen &+ ZERO_EXP_TEXT.count &+ plusLen
         for i in 0..<ZERO_EXP_TEXT.count {
-            ascii[signLen + i] = ZERO_EXP_TEXT[i]
+            ascii[signLen &+ i] = ZERO_EXP_TEXT[i]
         }
-        ascii[signLen + ZERO_EXP_TEXT.count] = ascii_plus // overwritten by the '-' when qExp < 0
-        return baseLen + appendIntBytes(ascii, baseLen, qExp)
+        ascii[signLen &+ ZERO_EXP_TEXT.count] = ascii_plus // overwritten by the '-' when qExp < 0
+        return baseLen &+ appendIntBytes(ascii, baseLen, qExp)
     }
 
     /// Write a signed decimal exponent at `off`, returning its length. The
@@ -732,14 +735,14 @@ public enum Decimal128TextCodec {
         } else {
             digitLen = 1
         }
-        renderTailDigitsBeforeIndex(digitLen, UInt64(magnitude), ascii, off + signLen + digitLen)
-        return signLen + digitLen
+        renderTailDigitsBeforeIndex(digitLen, UInt64(magnitude), ascii, off &+ signLen &+ digitLen)
+        return signLen &+ digitLen
     }
 
     private static func fnzBytes(_ ascii: UnsafeMutableBufferPointer<UInt8>, _ sign: Bool,
                                  _ qExp: Int, _ dw1: UInt64, _ dw0: UInt64) -> Int {
         let digitLen = calcDigitLen128(dw1, dw0)
-        let eExp = qExp + (digitLen - 1)
+        let eExp = qExp &+ (digitLen &- 1)
         if qExp == 0 {
             return fnzToIntegerBytes(ascii, sign, digitLen, dw1, dw0)
         }
@@ -763,7 +766,7 @@ public enum Decimal128TextCodec {
         // overwrites it, which is cheaper than branching
         ascii[0] = ascii_minus
         u128ToAscii(digitLen, dw1, dw0, ascii, signLen)
-        return signLen + digitLen
+        return signLen &+ digitLen
     }
 
     /// Format a finite non-zero value in fixed-point notation, with an explicit
@@ -776,23 +779,23 @@ public enum Decimal128TextCodec {
                                                _ qExp: Int, _ digitLen: Int,
                                                _ dw1: UInt64, _ dw0: UInt64) -> Int {
         let digitsRightOfDecimal = -qExp
-        let leadingZeroCount = max(1 + digitsRightOfDecimal - digitLen, 0)
+        let leadingZeroCount = max(1 &+ digitsRightOfDecimal &- digitLen, 0)
         let signLen = sign ? 1 : 0
         let decimalPointLen = 1
-        let totalLen = signLen + leadingZeroCount + decimalPointLen + digitLen
+        let totalLen = signLen &+ leadingZeroCount &+ decimalPointLen &+ digitLen
         ascii[0] = ascii_minus
         if signLen <= leadingZeroCount {
             for i in signLen...leadingZeroCount { // there is one extra here
                 ascii[i] = ascii_0
             }
         }
-        u128ToAscii(digitLen, dw1, dw0, ascii, signLen + leadingZeroCount)
-        var i = totalLen - 1
-        while i >= totalLen - digitsRightOfDecimal {
-            ascii[i] = ascii[i - 1]
-            i -= 1
+        u128ToAscii(digitLen, dw1, dw0, ascii, signLen &+ leadingZeroCount)
+        var i = totalLen &- 1
+        while i >= totalLen &- digitsRightOfDecimal {
+            ascii[i] = ascii[i &- 1]
+            i &-= 1
         }
-        ascii[totalLen - digitsRightOfDecimal - 1] = ascii_dot
+        ascii[totalLen &- digitsRightOfDecimal &- 1] = ascii_dot
         return totalLen
     }
 
@@ -808,7 +811,7 @@ public enum Decimal128TextCodec {
                                                        _ qExp: Int, _ digitLen: Int,
                                                        _ dw1: UInt64, _ dw0: UInt64) -> Int {
         verify(digitLen > 0)
-        let eExp = qExp + (digitLen - 1)
+        let eExp = qExp &+ (digitLen &- 1)
         // the reference computes this branchlessly off a 32-bit sign shift;
         // Swift's Int is 64-bit and the exponent is bounded well inside it
         let eExpAbs = eExp < 0 ? -eExp : eExp
@@ -827,16 +830,16 @@ public enum Decimal128TextCodec {
         } else {
             expDigitLen = 1
         }
-        let totalLen = signLen + decimalPointLen + digitLen + expELen + expSignLen + expDigitLen
+        let totalLen = signLen &+ decimalPointLen &+ digitLen &+ expELen &+ expSignLen &+ expDigitLen
         ascii[0] = ascii_minus
-        u128ToAscii(digitLen, dw1, dw0, ascii, signLen + decimalPointLen)
+        u128ToAscii(digitLen, dw1, dw0, ascii, signLen &+ decimalPointLen)
         if decimalPointLen > 0 {
-            ascii[signLen] = ascii[signLen + 1]
-            ascii[signLen + 1] = ascii_dot
+            ascii[signLen] = ascii[signLen &+ 1]
+            ascii[signLen &+ 1] = ascii_dot
         }
-        let iE = signLen + decimalPointLen + digitLen
+        let iE = signLen &+ decimalPointLen &+ digitLen
         ascii[iE] = ascii_E
-        ascii[iE + 1] = expSignByte
+        ascii[iE &+ 1] = expSignByte
         renderTailDigitsBeforeIndex(expDigitLen, UInt64(eExpAbs), ascii, totalLen)
         return totalLen
     }
@@ -876,32 +879,32 @@ public enum Decimal128TextCodec {
                                     _ ascii: UnsafeMutableBufferPointer<UInt8>, _ off: Int) -> Int {
         var dw1T = dw1
         var dw0T = dw0
-        var ich = off + digitPrintCount
+        var ich = off &+ digitPrintCount
         var remainingDigitCount = digitPrintCount
         while dw1T != 0 {
             let q2 = unsignedMulHi(dw1T, M_U64_DIV_1E8) >> S_U64_DIV_1E8
-            let r2 = dw1T - (q2 * 100_000_000)
+            let r2 = dw1T &- (q2 &* 100_000_000)
             let s2 = (r2 << 32) | (dw0T >> 32)
             let q1 = unsignedMulHi(s2, M_U64_DIV_1E8) >> S_U64_DIV_1E8
-            let r1 = s2 - (q1 * 100_000_000)
+            let r1 = s2 &- (q1 &* 100_000_000)
             let s1 = (r1 << 32) | (dw0T & MASK32)
             let q0 = unsignedMulHi(s1, M_U64_DIV_1E8) >> S_U64_DIV_1E8
-            let r0 = s1 - (q0 * 100_000_000)
+            let r0 = s1 &- (q0 &* 100_000_000)
             // q1 and q0 are each strictly below 2^32 -- r2 and r1 are remainders
             // mod 10^8 -- so this recombination cannot overflow
-            dw0T = (q1 << 32) + q0
+            dw0T = (q1 << 32) &+ q0
             dw1T = q2
             render8DigitsBeforeIndex(r0, ascii, ich)
-            ich -= 8
-            remainingDigitCount -= 8
+            ich &-= 8
+            remainingDigitCount &-= 8
         }
         while remainingDigitCount >= 8 {
             let t0 = unsignedMulHi(dw0T, M_U64_DIV_1E8) >> S_U64_DIV_1E8
-            let r0 = dw0T - (t0 * 100_000_000)
+            let r0 = dw0T &- (t0 &* 100_000_000)
             dw0T = t0
             render8DigitsBeforeIndex(r0, ascii, ich)
-            ich -= 8
-            remainingDigitCount -= 8
+            ich &-= 8
+            remainingDigitCount &-= 8
         }
         if remainingDigitCount > 0 {
             renderTailDigitsBeforeIndex(remainingDigitCount, dw0T, ascii, ich)
@@ -934,35 +937,35 @@ public enum Decimal128TextCodec {
     /// times for the individual digits.
     private static func render8DigitsBeforeIndex(_ dw: UInt64, _ ascii: UnsafeMutableBufferPointer<UInt8>, _ offMaxx: Int) {
         let abcd = unsignedMulHi(dw, M_U64_DIV_1E4) >> S_U64_DIV_1E4
-        let efgh = dw - (abcd * 10000)
+        let efgh = dw &- (abcd &* 10000)
 
-        let ab = (abcd * M_U32_DIV_1E2) >> S_U32_DIV_1E2
-        let cd = abcd - (ab * 100)
+        let ab = (abcd &* M_U32_DIV_1E2) >> S_U32_DIV_1E2
+        let cd = abcd &- (ab &* 100)
 
-        let ef = (efgh * M_U32_DIV_1E2) >> S_U32_DIV_1E2
-        let gh = efgh - (ef * 100)
+        let ef = (efgh &* M_U32_DIV_1E2) >> S_U32_DIV_1E2
+        let gh = efgh &- (ef &* 100)
 
-        let a = (ab * M_U32_DIV_1E1) >> S_U32_DIV_1E1
-        let b = ab - (a * 10)
+        let a = (ab &* M_U32_DIV_1E1) >> S_U32_DIV_1E1
+        let b = ab &- (a &* 10)
 
-        let c = (cd * M_U32_DIV_1E1) >> S_U32_DIV_1E1
-        let d = cd - (c * 10)
+        let c = (cd &* M_U32_DIV_1E1) >> S_U32_DIV_1E1
+        let d = cd &- (c &* 10)
 
-        let e = (ef * M_U32_DIV_1E1) >> S_U32_DIV_1E1
-        let f = ef - (e * 10)
+        let e = (ef &* M_U32_DIV_1E1) >> S_U32_DIV_1E1
+        let f = ef &- (e &* 10)
 
-        let g = (gh * M_U32_DIV_1E1) >> S_U32_DIV_1E1
-        let h = gh - (g * 10)
+        let g = (gh &* M_U32_DIV_1E1) >> S_U32_DIV_1E1
+        let h = gh &- (g &* 10)
 
-        demand(offMaxx - 8 >= 0 && offMaxx <= ascii.count, "render8 buffer")
-        ascii[offMaxx - 8] = ascii_0 &+ UInt8(truncatingIfNeeded: a)
-        ascii[offMaxx - 7] = ascii_0 &+ UInt8(truncatingIfNeeded: b)
-        ascii[offMaxx - 6] = ascii_0 &+ UInt8(truncatingIfNeeded: c)
-        ascii[offMaxx - 5] = ascii_0 &+ UInt8(truncatingIfNeeded: d)
-        ascii[offMaxx - 4] = ascii_0 &+ UInt8(truncatingIfNeeded: e)
-        ascii[offMaxx - 3] = ascii_0 &+ UInt8(truncatingIfNeeded: f)
-        ascii[offMaxx - 2] = ascii_0 &+ UInt8(truncatingIfNeeded: g)
-        ascii[offMaxx - 1] = ascii_0 &+ UInt8(truncatingIfNeeded: h)
+        demand(offMaxx &- 8 >= 0 && offMaxx <= ascii.count, "render8 buffer")
+        ascii[offMaxx &- 8] = ascii_0 &+ UInt8(truncatingIfNeeded: a)
+        ascii[offMaxx &- 7] = ascii_0 &+ UInt8(truncatingIfNeeded: b)
+        ascii[offMaxx &- 6] = ascii_0 &+ UInt8(truncatingIfNeeded: c)
+        ascii[offMaxx &- 5] = ascii_0 &+ UInt8(truncatingIfNeeded: d)
+        ascii[offMaxx &- 4] = ascii_0 &+ UInt8(truncatingIfNeeded: e)
+        ascii[offMaxx &- 3] = ascii_0 &+ UInt8(truncatingIfNeeded: f)
+        ascii[offMaxx &- 2] = ascii_0 &+ UInt8(truncatingIfNeeded: g)
+        ascii[offMaxx &- 1] = ascii_0 &+ UInt8(truncatingIfNeeded: h)
     }
 
     /// Render exactly `renderDigitCount` decimal digits of `dw` into `ascii`,
@@ -982,31 +985,31 @@ public enum Decimal128TextCodec {
         var ib = offMaxx
         while remainingDigitCount >= 4 {
             let t0 = unsignedMulHi(t, M_U64_DIV_1E4) >> S_U64_DIV_1E4
-            let abcd = t - (t0 * 10000)
+            let abcd = t &- (t0 &* 10000)
             t = t0
-            let ab = (abcd * M_U32_DIV_1E2) >> S_U32_DIV_1E2
-            let cd = abcd - (ab * 100)
-            let a = (ab * M_U32_DIV_1E1) >> S_U32_DIV_1E1
-            let b = ab - (a * 10)
-            let c = (cd * M_U32_DIV_1E1) >> S_U32_DIV_1E1
-            let d = cd - (c * 10)
-            demand(ib - 4 >= 0 && ib <= ascii.count, "renderTail buffer")
-            ascii[ib - 4] = ascii_0 &+ UInt8(truncatingIfNeeded: a)
-            ascii[ib - 3] = ascii_0 &+ UInt8(truncatingIfNeeded: b)
-            ascii[ib - 2] = ascii_0 &+ UInt8(truncatingIfNeeded: c)
-            ascii[ib - 1] = ascii_0 &+ UInt8(truncatingIfNeeded: d)
-            ib -= 4
-            remainingDigitCount -= 4
+            let ab = (abcd &* M_U32_DIV_1E2) >> S_U32_DIV_1E2
+            let cd = abcd &- (ab &* 100)
+            let a = (ab &* M_U32_DIV_1E1) >> S_U32_DIV_1E1
+            let b = ab &- (a &* 10)
+            let c = (cd &* M_U32_DIV_1E1) >> S_U32_DIV_1E1
+            let d = cd &- (c &* 10)
+            demand(ib &- 4 >= 0 && ib <= ascii.count, "renderTail buffer")
+            ascii[ib &- 4] = ascii_0 &+ UInt8(truncatingIfNeeded: a)
+            ascii[ib &- 3] = ascii_0 &+ UInt8(truncatingIfNeeded: b)
+            ascii[ib &- 2] = ascii_0 &+ UInt8(truncatingIfNeeded: c)
+            ascii[ib &- 1] = ascii_0 &+ UInt8(truncatingIfNeeded: d)
+            ib &-= 4
+            remainingDigitCount &-= 4
         }
         while remainingDigitCount > 0 {
-            let divTen = (t * M_U32_DIV_1E1) >> S_U32_DIV_1E1
-            let digit = t - (divTen * 10)
-            ib -= 1
+            let divTen = (t &* M_U32_DIV_1E1) >> S_U32_DIV_1E1
+            let digit = t &- (divTen &* 10)
+            ib &-= 1
             ascii[ib] = ascii_0 &+ UInt8(truncatingIfNeeded: digit)
             t = divTen
-            remainingDigitCount -= 1
+            remainingDigitCount &-= 1
         }
-        verify(offMaxx - ib == renderDigitCount)
+        verify(offMaxx &- ib == renderDigitCount)
     }
 
     // ==================================================================
@@ -1031,7 +1034,7 @@ public enum Decimal128TextCodec {
     private static func chAt(_ str: [UInt8], _ pos: inout Int) -> UInt8 {
         if pos < str.count {
             let c = str[pos]
-            pos += 1
+            pos &+= 1
             return c
         }
         return 0
@@ -1148,23 +1151,22 @@ public enum Decimal128TextCodec {
             var accum19a: UInt64 = 0
             var accum19b: UInt64 = 0
             while (isDigit(ch)) {
-                let d = UInt64(ch - ascii_0)
+                let d = UInt64(ch &- ascii_0)
                 // Count every digit written, leading zeros included. The
                 // 33-digit limit below is a limit on the payload as spelled, not
                 // on its significant digits, so "NaN" followed by forty zeros
                 // and a one is over the limit and reads as zero. Leading zeros
                 // contribute nothing to the accumulators, so the value of a
                 // payload within the limit is unaffected.
-                accumDigitCount += 1
+                accumDigitCount &+= 1
                 if (accumDigitCount <= 19) {
                     // at most 19 digits, and 10^19 - 1 fits a UInt64, so checked
-                    accum19a = (accum19a * 10) + d
+                    accum19a = (accum19a &* 10) &+ d
                 } else {
-                    // Wrapping on purpose. Within the 33-digit limit this holds
-                    // at most 14 digits and cannot wrap; past the limit it can,
-                    // and the whole payload is discarded below, so the wrapped
-                    // value is never read. The reference wraps here too -- the
-                    // JVM's Long simply does it silently.
+                    // Within the 33-digit limit this holds at most 14 digits
+                    // and cannot wrap; past the limit it can, and the whole
+                    // payload is discarded below, so the wrapped value is never
+                    // read.
                     accum19b = (accum19b &* 10) &+ d
                 }
                 ch = chAt(str, &pos)
@@ -1193,7 +1195,7 @@ public enum Decimal128TextCodec {
                 payloadDw0 = accum19a
                 payloadDw1 = 0
                 if (accumDigitCount > 19) {
-                    let pow10 = accumDigitCount - 19
+                    let pow10 = accumDigitCount &- 19
                     let p = u128FmaPow10(accum19a, pow10, accum19b)
                     payloadDw1 = p.hi
                     payloadDw0 = p.lo
@@ -1238,27 +1240,27 @@ public enum Decimal128TextCodec {
 
         while (isDigit(ch) || ch == ascii_dot || ch == ascii_underscore) {
             if (isDigit(ch)) {
-                let d = Int(ch - ascii_0)
+                let d = Int(ch &- ascii_0)
                 hasCoefficientDigit = true
                 // count while flushing leading zeros. The reference does this
                 // branchlessly off a 32-bit sign shift; Swift's Int is 64-bit,
                 // so the same thing is said directly.
                 if (significantDigitCount != 0 || d != 0) {
-                    significantDigitCount += 1
+                    significantDigitCount &+= 1
                 }
                 if (significantDigitCount <= 19) {
                     // at most 19 digits, and 10^19 - 1 fits a UInt64, so checked
-                    accum19a = (accum19a * 10) + UInt64(d)
+                    accum19a = (accum19a &* 10) &+ UInt64(d)
                 } else if (significantDigitCount <= 34) {
                     // at most 15 more digits, so likewise checked
-                    accum19b = (accum19b * 10) + UInt64(d)
-                } else if (significantDigitCount == 34 + 1) {
+                    accum19b = (accum19b &* 10) &+ UInt64(d)
+                } else if (significantDigitCount == 34 &+ 1) {
                     residue = residueFromDecimalDigit(d)
                 } else {
                     residue = residueMerge(residue, residueFromDecimalDigit(d))
                 }
                 if (hasDot) {
-                    fractionalDigitCount += 1
+                    fractionalDigitCount &+= 1
                 }
                 prevWasDigit = true
                 afterUnderscore = false
@@ -1306,14 +1308,14 @@ public enum Decimal128TextCodec {
                     afterUnderscore = true
                 } else {
                     hasExpDigit = true
-                    let eDigit = Int(ch - ascii_0)
+                    let eDigit = Int(ch &- ascii_0)
                     // count while flushing leading zeros
                     if (expSignificantDigitCount != 0 || eDigit != 0) {
-                        expSignificantDigitCount += 1
+                        expSignificantDigitCount &+= 1
                     }
-                    // Wrapping on purpose: the clamp below discards `exp`
-                    // entirely once more than 4 significant digits were written,
-                    // which is strictly before it could wrap.
+                    // The clamp below discards `exp` entirely once more than
+                    // 4 significant digits were written, which is strictly
+                    // before it could wrap.
                     exp = (exp &* 10) &+ eDigit
                     prevWasDigit = true
                     afterUnderscore = false
@@ -1338,7 +1340,7 @@ public enum Decimal128TextCodec {
         var dw0 = accum19a
         var dw1: UInt64 = 0
         if (significantDigitCount > 19) {
-            let pow10 = min(34, significantDigitCount) - 19
+            let pow10 = min(34, significantDigitCount) &- 19
             let p = u128FmaPow10(accum19a, pow10, accum19b)
             dw1 = p.hi
             dw0 = p.lo
@@ -1349,7 +1351,7 @@ public enum Decimal128TextCodec {
         // digits beyond the precision limit pull the quantum exponent in
         // opposite directions, so both corrections land here.
         let signedExp = expSign ? -exp : exp
-        let qExp = signedExp - fractionalDigitCount + max(0, significantDigitCount - 34)
+        let qExp = signedExp &- fractionalDigitCount &+ max(0, significantDigitCount &- 34)
         out = roundAndFinalizeFinite(formatIsBid, sign, qExp, dw1, dw0, residue)
         return nil
     }
@@ -1380,9 +1382,9 @@ public enum Decimal128TextCodec {
                                         _ dw1: UInt64, _ dw0: UInt64) -> Words {
         verify(qExp >= Q_MIN && qExp <= Q_MAX)
         verify(calcDigitLen128(dw1, dw0) <= 34)
-        let qBiased = qExp + BIAS
+        let qBiased = qExp &+ BIAS
         let s: UInt64 = sign ? SIGN_BIT : 0
-        let g = UInt64(qBiased) << (3 + 46)
+        let g = UInt64(qBiased) << (3 &+ 46)
         return (s | g | dw1, dw0)
     }
 
@@ -1404,17 +1406,17 @@ public enum Decimal128TextCodec {
         // kernel does the work and no wider machinery is needed.
         let step1 = u113DivModPow10Max9(dw1, dw0, 9)
         let step2 = u113DivModPow10Max9(step1.qHi, step1.qLo, 9)
-        let binLo = (step2.rem * 1_000_000_000) + step1.rem
+        let binLo = (step2.rem &* 1_000_000_000) &+ step1.rem
         verify(step2.qHi == 0) // the high 16 digits fit in one word
         let binHi = step2.qLo
 
         // the top digit rides in the combination field; the other 15 are declets
         let d0 = binHi / TEN_POW_15
-        let declets5Hi = decletsFromBin(binHi - (d0 * TEN_POW_15))
+        let declets5Hi = decletsFromBin(binHi &- (d0 &* TEN_POW_15))
         let declets6Lo = decletsFromBin(binLo)
         verify(d0 <= 9)
 
-        let biasedQExp = qExp + BIAS
+        let biasedQExp = qExp &+ BIAS
         let expMSB = (biasedQExp >> 12) & 0x3
         let expLSB = biasedQExp & 0x0FFF
         let gPrefix = (d0 <= 7)
@@ -1456,7 +1458,7 @@ public enum Decimal128TextCodec {
 
         let step1 = u113DivModPow10Max9(payloadDw1, payloadDw0, 9)
         let step2 = u113DivModPow10Max9(step1.qHi, step1.qLo, 9)
-        let binLo = (step2.rem * 1_000_000_000) + step1.rem
+        let binLo = (step2.rem &* 1_000_000_000) &+ step1.rem
         verify(step2.qHi == 0) // a 33-digit payload leaves 15 digits up top
         let declets5Hi = decletsFromBin(step2.qLo)
         let declets6Lo = decletsFromBin(binLo)
@@ -1569,9 +1571,9 @@ public enum Decimal128TextCodec {
         // Step 6: rounding ... in this world only ties-to-even
         let applyRounding = (totalResidue == GT_HALF || (totalResidue == HALF && (dw0 & 1) != 0))
         if (applyRounding) {
-            // step 6.1: increment. Wrapping on purpose: a coefficient of
-            // 0xFFFF...FFFF in the low word carries into the high word, which is
-            // exactly what the two statements together compute.
+            // step 6.1: increment. A coefficient of 0xFFFF...FFFF in the low
+            // word carries into the high word, which is exactly what the two
+            // statements together compute.
             dw0 = dw0 &+ 1
             dw1 = dw1 &+ (dw0 == 0 ? 1 : 0)
 
@@ -1579,7 +1581,7 @@ public enum Decimal128TextCodec {
             if (dw1 == MAXX_COEFF_34_HI && dw0 == MAXX_COEFF_34_LO) {
                 dw1 = MIN_PRECISION_34_COEFF_HI
                 dw0 = MIN_PRECISION_34_COEFF_LO
-                qExp += 1
+                qExp &+= 1
             }
         }
 
@@ -1587,9 +1589,9 @@ public enum Decimal128TextCodec {
         verify(qExp >= Q_MIN)
         verify(calcDigitLen128(dw1, dw0) <= 34)
         if (qExp > Q_MAX) {
-            let qExcess = qExp - Q_MAX
+            let qExcess = qExp &- Q_MAX
             let digitLen = calcDigitLen128(dw1, dw0)
-            if (digitLen + qExcess <= 34) {
+            if (digitLen &+ qExcess <= 34) {
                 return finalizeClamping(formatIsBid, sign, qExp, dw1, dw0)
             }
             return finalizeOverflow(sign)
@@ -1608,11 +1610,11 @@ public enum Decimal128TextCodec {
         if (qExp < Q_MIN || qExp > Q_MAX) {
             return false
         }
-        if (dw1.leadingZeroBitCount > 128 - 113) {
+        if (dw1.leadingZeroBitCount > 128 &- 113) {
             return true
         }
         let pow10Offset = 34 << 1
-        let maxxHi = POW10[pow10Offset + 1]
+        let maxxHi = POW10[pow10Offset &+ 1]
         return (dw1 < maxxHi || (dw1 == maxxHi && dw0 < POW10[pow10Offset]))
     }
 
@@ -1625,10 +1627,10 @@ public enum Decimal128TextCodec {
     /// (`digitLen + qExcess <= 34`).
     private static func finalizeClamping(_ formatIsBid: Bool, _ sign: Bool, _ qExp: Int,
                                          _ dw1: UInt64, _ dw0: UInt64) -> Words {
-        let qExcess = qExp - Q_MAX
-        verify(qExcess > 0 && qExcess <= 34 - calcDigitLen128(dw1, dw0))
+        let qExcess = qExp &- Q_MAX
+        verify(qExcess > 0 && qExcess <= 34 &- calcDigitLen128(dw1, dw0))
         let pow10Offset = qExcess << 1
-        let y1 = POW10[pow10Offset + 1]
+        let y1 = POW10[pow10Offset &+ 1]
         let y0 = POW10[pow10Offset]
         // A 128x128 product truncated to 128 bits: each partial product below
         // wraps by construction, and the discarded halves are known zero because
@@ -1657,7 +1659,7 @@ public enum Decimal128TextCodec {
                                                 _ residue: Int) -> Words {
         // IEEE 754 7.5 Underflow - handle subnormal region
         verify(qExp < Q_MIN)
-        let truncationNeeded = Q_MIN - qExp
+        let truncationNeeded = Q_MIN &- qExp
         let digitLen = calcDigitLen128(dw1, dw0)
         verify(digitLen <= 34)
         if (truncationNeeded > digitLen) {
@@ -1694,7 +1696,7 @@ public enum Decimal128TextCodec {
     private static func finalizeSubnormal(_ formatIsBid: Bool, _ sign: Bool, _ qExpIn: Int,
                                           _ dw1In: UInt64, _ dw0In: UInt64,
                                           _ residueIn: Int) -> Words {
-        let truncationNeeded = Q_MIN - qExpIn
+        let truncationNeeded = Q_MIN &- qExpIn
         verify(truncationNeeded > 0 && truncationNeeded < calcDigitLen128(dw1In, dw0In))
 
         let scaled = u128ScaleDownPow10(dw1In, dw0In, truncationNeeded)
@@ -1711,7 +1713,7 @@ public enum Decimal128TextCodec {
             if (dw1T == MAXX_COEFF_34_HI && dw0T == MAXX_COEFF_34_LO) {
                 dw1T = MIN_PRECISION_34_COEFF_HI
                 dw0T = MIN_PRECISION_34_COEFF_LO
-                qExpT += 1
+                qExpT &+= 1
             }
         }
         return setFinite(formatIsBid, sign, qExpT, dw1T, dw0T)
@@ -1770,7 +1772,7 @@ public enum Decimal128TextCodec {
             return EXACT
         }
         let pow10Index = pow10 << 1
-        let pow10Hi = POW10[pow10Index + 1]
+        let pow10Hi = POW10[pow10Index &+ 1]
         let pow10Lo = POW10[pow10Index]
 
         let halfHi = pow10Hi >> 1
@@ -1802,7 +1804,7 @@ public enum Decimal128TextCodec {
             dw0T = step.qLo
             let stepResidue = residueFromValuePow10(0, step.rem, stepPow10)
             scaleResidue = residueMerge(stepResidue, scaleResidue)
-            digitsRemaining -= stepPow10
+            digitsRemaining &-= stepPow10
         } while (digitsRemaining > 0)
         return (dw1T, dw0T, scaleResidue)
     }
@@ -1833,7 +1835,7 @@ public enum Decimal128TextCodec {
         var rest = declets
         var multiplier: UInt64 = 1
         while (rest != 0) {
-            bin += dpdDecodeDeclet(rest & 0x3FF) * multiplier
+            bin &+= dpdDecodeDeclet(rest & 0x3FF) &* multiplier
             multiplier &*= 1000
             rest >>= 10
         }
@@ -1851,8 +1853,8 @@ public enum Decimal128TextCodec {
         while (rest != 0) {
             // reciprocal-multiply divide by 1000
             let q = unsignedMulHi(rest, 0x020C_49BA_5E35_3F7D) >> 3
-            declets |= dpdEncodeDeclet(rest - (q * 1000)) << shift
-            shift += 10
+            declets |= dpdEncodeDeclet(rest &- (q &* 1000)) << shift
+            shift &+= 10
             rest = q
         }
         return declets
@@ -1909,7 +1911,7 @@ public enum Decimal128TextCodec {
         let d1 = (e << 3) | (f << 2) | (g << 1) | h
         let d0 = (i << 3) | (j << 2) | (k << 1) | m
 
-        return d2 * 100 + d1 * 10 + d0
+        return d2 &* 100 &+ d1 &* 10 &+ d0
     }
 
     /// Encode `0...999` into a 10-bit DPD declet, per Cowlishaw's bcd2dpd.
@@ -1925,12 +1927,12 @@ public enum Decimal128TextCodec {
         }
 
         // reciprocal-multiply digit extraction (optimized for n <= 999)
-        let q10 = (n * 205) >> 11 // n / 10
-        let q100 = (n * 41) >> 12 // n / 100
+        let q10 = (n &* 205) >> 11 // n / 10
+        let q100 = (n &* 41) >> 12 // n / 100
 
         let d2 = q100
-        let d1 = q10 - (q100 * 10)
-        let d0 = n - (q10 * 10)
+        let d1 = q10 &- (q100 &* 10)
+        let d0 = n &- (q10 &* 10)
 
         // BCD bits (MSB to LSB: 8, 4, 2, 1)
         let a = (d2 >> 3) & 1
@@ -2021,10 +2023,10 @@ public enum Decimal128TextCodec {
     @inline(__always)
     private static func calcBitLen128(_ dw1: UInt64, _ dw0: UInt64) -> Int {
         if (dw1 != 0) {
-            return 128 - dw1.leadingZeroBitCount
+            return 128 &- dw1.leadingZeroBitCount
         }
         if (dw0 != 0) {
-            return 64 - dw0.leadingZeroBitCount
+            return 64 &- dw0.leadingZeroBitCount
         }
         return 0
     }
@@ -2037,15 +2039,15 @@ public enum Decimal128TextCodec {
     @inline(__always)
     private static func calcDigitLen128(_ dw1: UInt64, _ dw0: UInt64) -> Int {
         let bitLen = calcBitLen128(dw1, dw0)
-        let loDigitCount = (bitLen * 1233) >> 12
-        let hiDigitCount = loDigitCount + 1
+        let loDigitCount = (bitLen &* 1233) >> 12
+        let hiDigitCount = loDigitCount &+ 1
         let pow10Offset = loDigitCount << 1
-        let p1 = POW10[pow10Offset + 1]
+        let p1 = POW10[pow10Offset &+ 1]
         let p0 = POW10[pow10Offset]
         if (dw1 != p1) {
-            return (dw1 < p1) ? hiDigitCount - 1 : hiDigitCount
+            return (dw1 < p1) ? hiDigitCount &- 1 : hiDigitCount
         }
-        return (dw0 < p0) ? hiDigitCount - 1 : hiDigitCount
+        return (dw0 < p0) ? hiDigitCount &- 1 : hiDigitCount
     }
 
     /// High 64 bits of the 128-bit product `x * y`.
@@ -2086,14 +2088,14 @@ public enum Decimal128TextCodec {
         verify(dwHi.leadingZeroBitCount >= 15)
 
         let sh = UInt64(pow10)
-        let mask = (UInt64(1) << sh) - 1
+        let mask = (UInt64(1) << sh) &- 1
         let b = dwLo & mask
         let sHi = dwHi >> sh
-        let sLo = (dwLo >> sh) | (dwHi << (64 - sh))
+        let sLo = (dwLo >> sh) | (dwHi << (64 &- sh))
 
-        let k = UInt64(50 - pow10)
-        let maskK = (UInt64(1) << k) - 1
-        let hi63 = (sHi << (14 + sh)) | (sLo >> k)
+        let k = UInt64(50 &- pow10)
+        let maskK = (UInt64(1) << k) &- 1
+        let hi63 = (sHi << (14 &+ sh)) | (sLo >> k)
         let loK = sLo & maskK
         // two slots per power in POW10, hence the doubled index
         let d = POW10[pow10 << 1] >> sh // = 5^pow10
@@ -2105,6 +2107,6 @@ public enum Decimal128TextCodec {
 
         // `q1 << k` deliberately drops the bits that `qHi` picks up; the low k
         // bits it leaves are zero, so the add below is an or and cannot carry.
-        return (q1 >> (14 + sh), (q1 << k) + q0, (r0 << sh) | b)
+        return (q1 >> (14 &+ sh), (q1 << k) &+ q0, (r0 << sh) | b)
     }
 }
