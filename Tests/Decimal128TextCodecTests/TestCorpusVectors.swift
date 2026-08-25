@@ -67,27 +67,35 @@ struct TestCorpusVectors {
         }
     }
 
-    @Test("T1/T2: the 100-value table decodes and re-encodes")
-    func hundred() throws {
+    /// T1: every row's two encodings must render to the expected text.
+    @Test("hundred decodes")
+    func hundredDecodes() throws {
         let rows = try Corpus.load(Corpus.hundred)
         #expect(rows.count == 100)
         Self.runDecodeTable(rows, "100")
+    }
+
+    /// T2: and the text must encode back to the same bits.
+    @Test("hundred re-encodes")
+    func hundredReEncodes() throws {
+        let rows = try Corpus.load(Corpus.hundred)
+        #expect(rows.count == 100)
         Self.runEncodeTable(rows, "100")
     }
 
     /// One-way rows: both encodings decode to the text, but at least one is a
     /// bit pattern the canonical encoder would never emit, so re-encoding is
     /// deliberately not asserted.
-    @Test("T1: non-canonical encodings render as their canonical spelling")
-    func nonCanonical() throws {
+    @Test("non-canonical encodings render correctly")
+    func nonCanonicalEncodingsRenderCorrectly() throws {
         let rows = try Corpus.load(Corpus.nonCanonical)
         #expect(rows.count == 1267)
         Self.runDecodeTable(rows, "noncanonical")
     }
 
-    /// The only table that reaches the rounding surface at all.
-    @Test("T3: input text parses to the expected bits in both formats")
-    func parse() throws {
+    /// T3: the only table that reaches the rounding surface at all.
+    @Test("parse vectors produce both encodings")
+    func parseVectorsProduceBothEncodings() throws {
         let rows = try Corpus.load(Corpus.parse)
         #expect(rows.count == 1061)
         for row in rows {
@@ -106,13 +114,12 @@ struct TestCorpusVectors {
         }
     }
 
-    /// Malformed input. Both formats must reject, must agree on the message,
-    /// and must still have written the canonical positive quiet NaN — the
-    /// corpus carries that pattern in its bits columns precisely so a port can
-    /// assert the written value and not merely the rejection.
-    ///
-    @Test("T4: malformed input is rejected identically by both formats")
-    func error() throws {
+    /// T4: malformed input. Both formats must reject, must agree on the
+    /// message, and must still have written the canonical positive quiet NaN —
+    /// the corpus carries that pattern in its bits columns precisely so a port
+    /// can assert the written value and not merely the rejection.
+    @Test("error vectors are rejected by both formats")
+    func errorVectorsAreRejectedByBothFormats() throws {
         let rows = try Corpus.load(Corpus.error)
         #expect(rows.count == 173)
         for row in rows {
@@ -132,7 +139,7 @@ struct TestCorpusVectors {
     /// The reader itself. `parse` and `error` quote their text column, and the
     /// four rows below are exactly the ones a naive comma split corrupts while
     /// still passing — a mangled malformed input fails to parse either way.
-    @Test("the quoted text column survives the reader")
+    @Test("quoted column round trips")
     func quotedColumnRoundTrips() throws {
         let rows = try Corpus.load(Corpus.error)
         let texts = Set(rows.map(\.text))
@@ -149,8 +156,8 @@ struct TestCorpusVectors {
 @Suite
 struct TestCanonicalCorpus {
 
-    @Test("T1/T2: the 84,783-row canonical table decodes and re-encodes")
-    func canonical() throws {
+    @Test("canonical table decodes and re-encodes")
+    func canonicalTableDecodesAndReEncodes() throws {
         let rows = try Corpus.load(Corpus.canonical)
         #expect(rows.count == 84783)
         TestCorpusVectors.runDecodeTable(rows, "canonical")

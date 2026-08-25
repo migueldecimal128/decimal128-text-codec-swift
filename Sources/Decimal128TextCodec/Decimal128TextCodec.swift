@@ -7,7 +7,7 @@
 // wrapping `/`, and no divisor reachable here is zero.
 //
 // Everything reachable from outside is the functions on the type below;
-// the rest is `private`, or `internal` where a test needs to reach it.
+// the rest is `private`.
 
 /// Thin codec between the two IEEE 754-2019 decimal128 interchange encodings —
 /// BID (Binary Integer Decimal) and DPD (Densely Packed Decimal) — and decimal
@@ -177,9 +177,7 @@ public enum Decimal128TextCodec {
     ///
     /// Writes the ASCII text into `out` starting at index 0 and returns its
     /// length; the text is `out[0..<n]`. No terminator is written. `out` must
-    /// have at least `MAX_LEN` elements; a shorter one traps on the first
-    /// write past its end rather than corrupting anything, so an undersized
-    /// buffer is a caller bug that surfaces immediately.
+    /// have at least `MAX_LEN` elements.
     ///
     /// The text is identical to what `bid128ToString(_:)` returns, and this
     /// form is the one to reach for when the destination is bytes — a stream,
@@ -207,9 +205,7 @@ public enum Decimal128TextCodec {
     ///
     /// Writes the ASCII text into `out` starting at index 0 and returns its
     /// length; the text is `out[0..<n]`. No terminator is written. `out` must
-    /// have at least `MAX_LEN` elements; a shorter one traps on the first
-    /// write past its end rather than corrupting anything, so an undersized
-    /// buffer is a caller bug that surfaces immediately.
+    /// have at least `MAX_LEN` elements.
     ///
     /// The text is identical to what `dpd128ToString(_:)` returns, and this
     /// form is the one to reach for when the destination is bytes — a stream,
@@ -725,10 +721,6 @@ public enum Decimal128TextCodec {
 
     /// Format a finite non-zero value with `qExp == 0` as a plain integer
     /// sequence: no radix point, no exponent.
-    ///
-    /// Fast path: when the value fits in a non-negative `Int64`, defer to the
-    /// standard integer formatting. General path: render via ``u128ToAscii``
-    /// into a buffer sized exactly to the result.
     private static func fnzToIntegerBytes(_ ascii: UnsafeMutableBufferPointer<UInt8>, _ sign: Bool,
                                           _ digitLen: Int, _ dw1: UInt64, _ dw0: UInt64) -> Int {
         verify(digitLen > 0)
@@ -1628,7 +1620,7 @@ public enum Decimal128TextCodec {
     private static func finalizeUnderflowRegion(_ formatIsBid: Bool, _ sign: Bool, _ qExp: Int,
                                                 _ dw1: UInt64, _ dw0: UInt64,
                                                 _ residue: Int) -> Words {
-        // IEEE 754 7.5 Underflow - handle subnormal region
+        // IEEE 754-2019 7.5 Underflow -- the subnormal region
         verify(qExp < Q_MIN)
         let truncationNeeded = Q_MIN &- qExp
         let digitLen = calcDigitLen128(dw1, dw0)
@@ -1791,9 +1783,6 @@ public enum Decimal128TextCodec {
     // bcd2dpd -- rather than lookup tables, which is what the reference measured
     // as the smaller and faster choice and what transcribes unchanged into the
     // sibling ports.
-    //
-    // `internal` rather than `private` so the tests can reach them. `internal`
-    // is module-scoped, so this does not widen the published API.
     // ==================================================================
 
     /// Decode up to seven packed DPD declets into a binary integer.
@@ -1833,8 +1822,9 @@ public enum Decimal128TextCodec {
 
     /// Decode a 10-bit DPD declet into `0...999`.
     ///
-    /// Mapping: bit9..bit0 as `p q r s t u v w x y`. Handles non-canonical
-    /// declets as well as canonical ones, per Cowlishaw's dpd2bcd.
+    /// Mapping: bit9..bit0 as `p q r s t u v w x y`. Accepts the 24
+    /// non-canonical declets as well as the 1000 canonical ones, per
+    /// Cowlishaw's dpd2bcd.
     private static func dpdDecodeDeclet(_ declet: UInt64) -> UInt64 {
         verify(declet <= 1023)
 
@@ -1947,8 +1937,15 @@ public enum Decimal128TextCodec {
 
     /// Powers of 10 from `10^0` through `10^34` as 128-bit values in
     /// little-endian order: `POW10[2*i]` is the low 64 bits and
-    /// `POW10[2*i + 1]` the high 64 bits of `10^i`. Sized to the decimal128
-    /// coefficient bound.
+    /// `POW10[2*i + 1]` the high 64 bits of `10^i`.
+    ///
+    /// Sized to the coefficient bound and indexed directly -- no mask, no
+    /// padding. Every reachable index is at most 34: the binding case is
+    /// ``calcDigitLen128(_:_:)``, whose input is always a coefficient or NaN
+    /// payload below `10^34`, so `bitLen <= 113` and
+    /// `(bitLen * 1233) >> 12 <= 34`. It doubles as the `5^n` source for the
+    /// divide kernel, since `10^n >> n` is exactly `5^n`; there is no POW5
+    /// table.
     private static let POW10: [UInt64] = [
         // little-endian order
         1, 0,                     // 1 (10**0)
@@ -2048,11 +2045,6 @@ public enum Decimal128TextCodec {
     /// Table-free: `10^pow10` factors as `2^pow10 * 5^pow10`, so the low
     /// `pow10` bits fall straight out as the low part of the remainder and the
     /// shifted value is divided by `5^pow10` with two hardware 64-bit divides.
-    ///
-    /// Not directly covered by the tests. The shared corpus barely reaches it --
-    /// measured on the reference, the two render suites call it zero times and
-    /// the parse suite reaches it 20 times across five of its nine powers -- so
-    /// the suite can be green with this kernel substantially wrong.
     private static func u113DivModPow10Max9(_ dwHi: UInt64, _ dwLo: UInt64,
                                              _ pow10: Int) -> (qHi: UInt64, qLo: UInt64, rem: UInt64) {
         verify(pow10 >= 1 && pow10 <= 9)
