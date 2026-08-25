@@ -1823,6 +1823,8 @@ public enum Decimal128TextCodec {
         var multiplier: UInt64 = 1
         while (rest != 0) {
             bin &+= dpdDecodeDeclet(rest & 0x3FF) &* multiplier
+            // The last iteration multiplies past 10^18 and the product is never
+            // used, since `rest` is zero by then. The reference wraps here too.
             multiplier &*= 1000
             rest >>= 10
         }
