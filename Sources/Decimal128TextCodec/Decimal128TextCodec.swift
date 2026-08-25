@@ -103,7 +103,7 @@ public enum Decimal128TextCodec {
     /// - Returns: the decimal character sequence for `bits`.
     public static func bid128ToString(_ bits: UInt128) -> String {
         return String(unsafeUninitializedCapacity: MAX_LEN) { buf in
-            decodeBid128toBytes(buf, hiWord(bits), loWord(bits))
+            decodeBid128toAscii(buf, hiWord(bits), loWord(bits))
         }
     }
 
@@ -124,7 +124,7 @@ public enum Decimal128TextCodec {
     /// - Returns: the decimal character sequence for `bits`.
     public static func dpd128ToString(_ bits: UInt128) -> String {
         return String(unsafeUninitializedCapacity: MAX_LEN) { buf in
-            decodeDpd128toBytes(buf, hiWord(bits), loWord(bits))
+            decodeDpd128toAscii(buf, hiWord(bits), loWord(bits))
         }
     }
 
@@ -162,7 +162,7 @@ public enum Decimal128TextCodec {
     /// - Returns: the number of bytes written.
     public static func bid128ToAscii(_ out: inout [UInt8], _ bits: UInt128) -> Int {
         return out.withUnsafeMutableBufferPointer { buf in
-            decodeBid128toBytes(buf, hiWord(bits), loWord(bits))
+            decodeBid128toAscii(buf, hiWord(bits), loWord(bits))
         }
     }
 
@@ -178,7 +178,7 @@ public enum Decimal128TextCodec {
     /// - Returns: the number of bytes written.
     public static func dpd128ToAscii(_ out: inout [UInt8], _ bits: UInt128) -> Int {
         return out.withUnsafeMutableBufferPointer { buf in
-            decodeDpd128toBytes(buf, hiWord(bits), loWord(bits))
+            decodeDpd128toAscii(buf, hiWord(bits), loWord(bits))
         }
     }
 
@@ -383,8 +383,9 @@ public enum Decimal128TextCodec {
     /// Field extraction follows IEEE 754-2019 §3.5.2; the class it lands on --
     /// Infinity, NaN (quiet or signaling, with optional payload), zero
     /// (canonical or non-canonical), or finite non-zero -- picks the leaf
-    /// renderer. ``bid128ToString(_:)`` wraps what this writes.
-    private static func decodeBid128toBytes(_ ascii: UnsafeMutableBufferPointer<UInt8>,
+    /// renderer. ``bid128ToString(_:)`` and ``bid128ToAscii(_:_:)`` both wrap
+    /// what this writes.
+    private static func decodeBid128toAscii(_ ascii: UnsafeMutableBufferPointer<UInt8>,
                                             _ bid128Hi: UInt64, _ bid128Lo: UInt64) -> Int {
         // IEEE754-2019 Table 3.6 -- Decimal interchange format parameters, p 23
         let k = 128       // storage width in bits
@@ -447,10 +448,10 @@ public enum Decimal128TextCodec {
 
     /// Render a DPD128 encoding into the caller's buffer.
     ///
-    /// The peer of ``decodeBid128toBytes(_:_:_:)``: both reduce an encoding to
+    /// The peer of ``decodeBid128toAscii(_:_:_:)``: both reduce an encoding to
     /// `(sign, qExp, coefficient)` and then dispatch to the same leaf
     /// renderers, which have never seen an interchange format.
-    private static func decodeDpd128toBytes(_ ascii: UnsafeMutableBufferPointer<UInt8>,
+    private static func decodeDpd128toAscii(_ ascii: UnsafeMutableBufferPointer<UInt8>,
                                             _ dpd128Hi: UInt64, _ dpd128Lo: UInt64) -> Int {
         let w = 12        // exponent continuation width
         let t = T_WIDTH   // trailing significand field width in bits
