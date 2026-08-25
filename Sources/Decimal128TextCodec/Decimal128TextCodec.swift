@@ -177,7 +177,10 @@ public enum Decimal128TextCodec {
     ///
     /// Writes the ASCII text into `out` starting at index 0 and returns its
     /// length; the text is `out[0..<n]`. No terminator is written. `out` must
-    /// have at least `MAX_LEN` elements.
+    /// have at least `MAX_LEN` elements; a shorter one traps on entry rather
+    /// than corrupting anything, so an undersized buffer is a caller bug that
+    /// surfaces immediately — on every call, not only on the values that would
+    /// have overflowed it.
     ///
     /// The text is identical to what `bid128ToString(_:)` returns, and this
     /// form is the one to reach for when the destination is bytes — a stream,
@@ -205,7 +208,10 @@ public enum Decimal128TextCodec {
     ///
     /// Writes the ASCII text into `out` starting at index 0 and returns its
     /// length; the text is `out[0..<n]`. No terminator is written. `out` must
-    /// have at least `MAX_LEN` elements.
+    /// have at least `MAX_LEN` elements; a shorter one traps on entry rather
+    /// than corrupting anything, so an undersized buffer is a caller bug that
+    /// surfaces immediately — on every call, not only on the values that would
+    /// have overflowed it.
     ///
     /// The text is identical to what `dpd128ToString(_:)` returns, and this
     /// form is the one to reach for when the destination is bytes — a stream,
@@ -485,6 +491,13 @@ public enum Decimal128TextCodec {
         let k = 128       // storage width in bits
         let t = T_WIDTH   // trailing significand field width in bits
         verify(1 &+ W5 &+ t == k)
+        // The API's contract is a buffer of at least MAX_LEN, so that is what is
+        // checked -- once, on every call, rather than per value. A shorter buffer
+        // that happens to fit the value in hand is still a caller bug, and one
+        // that would otherwise surface only on the data that overflows it. The
+        // sibling ports get this from the parameter's type; Swift takes a
+        // [UInt8] of any size, so it is enforced here.
+        demand(ascii.count >= MAX_LEN, "the buffer is at least MAX_LEN bytes")
 
         // 1 + 17 + 110 == 128
         // 1 bit for the sign
@@ -549,6 +562,8 @@ public enum Decimal128TextCodec {
                                             _ dpd128Hi: UInt64, _ dpd128Lo: UInt64) -> Int {
         let w = 12        // exponent continuation width
         let t = T_WIDTH   // trailing significand field width in bits
+        // see decodeBid128toAscii: the API's contract is checked, not the value's
+        demand(ascii.count >= MAX_LEN, "the buffer is at least MAX_LEN bytes")
 
         let sign = (dpd128Hi & SIGN_BIT) != 0
         let combination = Int((dpd128Hi >> (t &- 64)) & 0x1FFFF)
@@ -623,11 +638,13 @@ public enum Decimal128TextCodec {
 
     private static func infBytes(_ ascii: UnsafeMutableBufferPointer<UInt8>, _ sign: Bool) -> Int {
         let signLen = sign ? 1 : 0
+        let totalLen = signLen &+ INFINITY_TEXT.count
+        demand(totalLen <= MAX_LEN, "Infinity fits the buffer")
         ascii[0] = ascii_minus // overwritten by the 'I' when unsigned
         for i in 0..<INFINITY_TEXT.count {
             ascii[signLen &+ i] = INFINITY_TEXT[i]
         }
-        return signLen &+ INFINITY_TEXT.count
+        return totalLen
     }
 
     private static func nanBytes(_ ascii: UnsafeMutableBufferPointer<UInt8>, _ sign: Bool,
@@ -637,6 +654,7 @@ public enum Decimal128TextCodec {
         let sLen = isSignaling ? 1 : 0
         let wordOff = signLen &+ sLen
         let baseLen = wordOff &+ NAN_TEXT.count
+        demand(baseLen <= MAX_LEN, "the bare NaN fits the buffer")
         ascii[0] = ascii_minus   // overwritten by the 's' or the 'N' when unsigned
         ascii[signLen] = ascii_s // overwritten by the 'N' when quiet
         for i in 0..<NAN_TEXT.count {
@@ -649,17 +667,20 @@ public enum Decimal128TextCodec {
             return baseLen
         }
         let digitLen = calcDigitLen128(payloadHi, payloadLo)
+        let totalLen = baseLen &+ digitLen
+        demand(totalLen <= MAX_LEN, "the NaN payload fits the buffer")
         u128ToAscii(digitLen, payloadHi, payloadLo, ascii, baseLen)
-        return baseLen &+ digitLen
+        return totalLen
     }
 
     private static func zerBytes(_ ascii: UnsafeMutableBufferPointer<UInt8>, _ sign: Bool,
                                  _ qExp: Int) -> Int {
         let signLen = sign ? 1 : 0
-        ascii[0] = ascii_minus // overwritten by the '0' when unsigned
         if qExp <= 0 && qExp >= -6 {
             let k = -qExp
             let zeroLen = (k == 0) ? 1 : k &+ 2
+            demand(signLen &+ zeroLen <= MAX_LEN, "the plain zero fits the buffer")
+            ascii[0] = ascii_minus // overwritten by the '0' when unsigned
             for i in 0..<zeroLen {
                 ascii[signLen &+ i] = PLAIN_ZERO[i]
             }
@@ -674,6 +695,8 @@ public enum Decimal128TextCodec {
         // already taken every qExp in [-6, 0], so this branch never sees zero.
         let plusLen = (qExp > 0) ? 1 : 0
         let baseLen = signLen &+ ZERO_EXP_TEXT.count &+ plusLen
+        demand(baseLen &+ 6 <= MAX_LEN, "the exponent-form zero fits the buffer")
+        ascii[0] = ascii_minus // overwritten by the '0' when unsigned
         for i in 0..<ZERO_EXP_TEXT.count {
             ascii[signLen &+ i] = ZERO_EXP_TEXT[i]
         }
@@ -725,11 +748,13 @@ public enum Decimal128TextCodec {
                                           _ digitLen: Int, _ dw1: UInt64, _ dw0: UInt64) -> Int {
         verify(digitLen > 0)
         let signLen = sign ? 1 : 0
+        let totalLen = signLen &+ digitLen
+        demand(totalLen <= MAX_LEN, "the integer form fits the buffer")
         // written unconditionally: when there is no sign the first digit
         // overwrites it, which is cheaper than branching
         ascii[0] = ascii_minus
         u128ToAscii(digitLen, dw1, dw0, ascii, signLen)
-        return signLen &+ digitLen
+        return totalLen
     }
 
     /// Format a finite non-zero value in fixed-point notation, with an explicit
@@ -746,6 +771,7 @@ public enum Decimal128TextCodec {
         let signLen = sign ? 1 : 0
         let decimalPointLen = 1
         let totalLen = signLen &+ leadingZeroCount &+ decimalPointLen &+ digitLen
+        demand(totalLen <= MAX_LEN, "the fixed-point form fits the buffer")
         ascii[0] = ascii_minus
         if signLen <= leadingZeroCount {
             for i in signLen...leadingZeroCount { // there is one extra here
@@ -794,6 +820,7 @@ public enum Decimal128TextCodec {
             expDigitLen = 1
         }
         let totalLen = signLen &+ decimalPointLen &+ digitLen &+ expELen &+ expSignLen &+ expDigitLen
+        demand(totalLen <= MAX_LEN, "the scientific form fits the buffer")
         ascii[0] = ascii_minus
         u128ToAscii(digitLen, dw1, dw0, ascii, signLen &+ decimalPointLen)
         if decimalPointLen > 0 {
@@ -920,7 +947,7 @@ public enum Decimal128TextCodec {
         let g = (gh &* M_U32_DIV_1E1) >> S_U32_DIV_1E1
         let h = gh &- (g &* 10)
 
-        demand(offMaxx &- 8 >= 0 && offMaxx <= ascii.count, "render8 buffer")
+        demand(offMaxx &- 8 >= 0, "the eight digits are inside the buffer")
         ascii[offMaxx &- 8] = ascii_0 &+ UInt8(truncatingIfNeeded: a)
         ascii[offMaxx &- 7] = ascii_0 &+ UInt8(truncatingIfNeeded: b)
         ascii[offMaxx &- 6] = ascii_0 &+ UInt8(truncatingIfNeeded: c)
@@ -946,6 +973,7 @@ public enum Decimal128TextCodec {
         var t = dw
         var remainingDigitCount = renderDigitCount
         var ib = offMaxx
+        demand(offMaxx &- renderDigitCount >= 0, "the digits are inside the buffer")
         while remainingDigitCount >= 4 {
             let t0 = unsignedMulHi(t, M_U64_DIV_1E4) >> S_U64_DIV_1E4
             let abcd = t &- (t0 &* 10000)
@@ -956,7 +984,6 @@ public enum Decimal128TextCodec {
             let b = ab &- (a &* 10)
             let c = (cd &* M_U32_DIV_1E1) >> S_U32_DIV_1E1
             let d = cd &- (c &* 10)
-            demand(ib &- 4 >= 0 && ib <= ascii.count, "renderTail buffer")
             ascii[ib &- 4] = ascii_0 &+ UInt8(truncatingIfNeeded: a)
             ascii[ib &- 3] = ascii_0 &+ UInt8(truncatingIfNeeded: b)
             ascii[ib &- 2] = ascii_0 &+ UInt8(truncatingIfNeeded: c)
