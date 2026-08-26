@@ -69,7 +69,7 @@
 ///
 /// All functions are pure and safe for concurrent use.
 ///
-/// ## In this port
+/// ## This implementation
 ///
 /// The renderers return a `String`; their `bid128ToAscii(_:_:)` and
 /// `dpd128ToAscii(_:_:)` peers write into a caller-owned `[UInt8]` and return
@@ -168,8 +168,7 @@ public enum Decimal128TextCodec {
     /// consume the slack instead of firing.
     ///
     /// A buffer passed to `bid128ToAscii(_:_:)` must be at least this long.
-    /// The C port's `D128TEXT_MAX_LEN` is one larger, because it writes a NUL
-    /// and this does not.
+    /// No NUL is written, so no room is reserved for one.
     public static let MAX_LEN = 42
 
     /// Render a BID128 encoding into a caller-supplied buffer, allocating
@@ -283,7 +282,10 @@ public enum Decimal128TextCodec {
     /// - Returns: `nil` on success, or a human-readable message on failure.
     public static func bid128Parse(_ out: inout UInt128, _ text: String) -> String? {
         var words: Words = (0, 0)
-        let errorStr = encodeStringOrError(&words, formatIsBid: true, str: Array(text.utf8))
+        var text = text
+        let errorStr = text.withUTF8 { str in
+            encodeStringOrError(&words, formatIsBid: true, str: str)
+        }
         if errorStr != nil {
             words = (QNAN_PATTERN_HI, 0)
         }
@@ -340,7 +342,10 @@ public enum Decimal128TextCodec {
     /// - Returns: `nil` on success, or a human-readable message on failure.
     public static func dpd128Parse(_ out: inout UInt128, _ text: String) -> String? {
         var words: Words = (0, 0)
-        let errorStr = encodeStringOrError(&words, formatIsBid: false, str: Array(text.utf8))
+        var text = text
+        let errorStr = text.withUTF8 { str in
+            encodeStringOrError(&words, formatIsBid: false, str: str)
+        }
         if errorStr != nil {
             words = (QNAN_PATTERN_HI, 0)
         }
@@ -351,8 +356,8 @@ public enum Decimal128TextCodec {
     // ------------------------------------------------------------------
     // Internal-state assertions
     //
-    // Two mechanisms, and the split matters here for the same reason it does in
-    // the C port.
+    // Two mechanisms: one is a debugging aid, the other guards a write into a
+    // caller's buffer.
     //
     //   verify   internal-consistency claims -- unreachable for ANY input, so a
     //            failure is a codec bug rather than bad data. Compiled out
@@ -361,8 +366,8 @@ public enum Decimal128TextCodec {
     //            inside the library on data they do not control.
     //
     //   demand   buffer-sizing and invariant claims that guard a write or an
-    //            encode. In Kotlin the equivalent violation throws; here it
-    //            traps, and it stays live in every configuration because the
+    //            encode. A violation here traps, and it stays live in every
+    //            configuration because the
     //            alternative is silently encoding an out-of-range value.
     // ------------------------------------------------------------------
 
@@ -390,11 +395,10 @@ public enum Decimal128TextCodec {
     // The 128-bit boundary
     //
     // Public in, public out. Everything between these and the encoders works in
-    // the reference's `dw1` / `dw0` word pair, which is what makes the two
-    // files readable side by side.
+    // a `dw1` / `dw0` word pair.
     // ------------------------------------------------------------------
 
-    /// The reference's `LongArray(2)`, as a value rather than a buffer:
+    /// A pair of encoding words as a value rather than a buffer:
     /// `hi` is the high 64 bits of an encoding, `lo` the low 64.
     private typealias Words = (hi: UInt64, lo: UInt64)
 
@@ -419,9 +423,9 @@ public enum Decimal128TextCodec {
 
     /// The trailing-significand mask for the high word.
     ///
-    /// The reference writes this as `(1L shl t) - 1L` with `t == 110` and leans
-    /// on the JVM masking shift counts to 6 bits, which turns it into
-    /// `(1 shl 46) - 1`. Swift's shift is not a masking shift -- `1 << 110` on a
+    /// Written directly as `(1 << t) - 1` with `t == 110` this would lean on
+    /// shift counts being masked to 6 bits, turning it into
+    /// `(1 << 46) - 1`. Swift's shift is not a masking shift -- `1 << 110` on a
     /// `UInt64` is 0, and subtracting 1 from that traps -- so the intended
     /// 46-bit mask is spelled out.
     private static let COEFF_T_HI_MASK: UInt64 = (UInt64(1) << (110 &- 64)) &- 1
@@ -446,11 +450,13 @@ public enum Decimal128TextCodec {
     private static let TEN_POW_15: UInt64 = 1_000_000_000_000_000
     private static let TEN_POW_18: UInt64 = 1_000_000_000_000_000_000
 
-    private static let ascii_minus: UInt8 = 0x2D
-    private static let ascii_plus: UInt8 = 0x2B
-    private static let ascii_0: UInt8 = 0x30
-    private static let ascii_dot: UInt8 = 0x2E
-    private static let ascii_E: UInt8 = 0x45
+    // The parser reads character codes as `Int`, so that is the type these
+    // carry; the renderers write bytes and narrow at the point of the write.
+    private static let ascii_minus: Int = 0x2D
+    private static let ascii_plus: Int = 0x2B
+    private static let ascii_0: Int = 0x30
+    private static let ascii_dot: Int = 0x2E
+    private static let ascii_E: Int = 0x45
 
     // ----------------------------------------------------------------------
     // Rendering into a buffer
@@ -476,7 +482,7 @@ public enum Decimal128TextCodec {
     // zero, noted where it happens.
     // ----------------------------------------------------------------------
 
-    private static let ascii_s: UInt8 = 0x73
+    private static let ascii_s: Int = 0x73
 
     /// Render a BID128 encoding into the caller's buffer.
     ///
@@ -494,9 +500,9 @@ public enum Decimal128TextCodec {
         // The API's contract is a buffer of at least MAX_LEN, so that is what is
         // checked -- once, on every call, rather than per value. A shorter buffer
         // that happens to fit the value in hand is still a caller bug, and one
-        // that would otherwise surface only on the data that overflows it. The
-        // sibling ports get this from the parameter's type; Swift takes a
-        // [UInt8] of any size, so it is enforced here.
+        // that would otherwise surface only on the data that overflows it. A
+        // fixed-size parameter type would carry this in the signature; Swift
+        // takes a [UInt8] of any size, so it is enforced here.
         demand(ascii.count >= MAX_LEN, "the buffer is at least MAX_LEN bytes")
 
         // 1 + 17 + 110 == 128
@@ -640,7 +646,7 @@ public enum Decimal128TextCodec {
         let signLen = sign ? 1 : 0
         let totalLen = signLen &+ INFINITY_TEXT.count
         demand(totalLen <= MAX_LEN, "Infinity fits the buffer")
-        ascii[0] = ascii_minus // overwritten by the 'I' when unsigned
+        ascii[0] = UInt8(ascii_minus) // overwritten by the 'I' when unsigned
         for i in 0..<INFINITY_TEXT.count {
             ascii[signLen &+ i] = INFINITY_TEXT[i]
         }
@@ -655,8 +661,8 @@ public enum Decimal128TextCodec {
         let wordOff = signLen &+ sLen
         let baseLen = wordOff &+ NAN_TEXT.count
         demand(baseLen <= MAX_LEN, "the bare NaN fits the buffer")
-        ascii[0] = ascii_minus   // overwritten by the 's' or the 'N' when unsigned
-        ascii[signLen] = ascii_s // overwritten by the 'N' when quiet
+        ascii[0] = UInt8(ascii_minus)   // overwritten by the 's' or the 'N' when unsigned
+        ascii[signLen] = UInt8(ascii_s) // overwritten by the 'N' when quiet
         for i in 0..<NAN_TEXT.count {
             ascii[wordOff &+ i] = NAN_TEXT[i]
         }
@@ -680,7 +686,7 @@ public enum Decimal128TextCodec {
             let k = -qExp
             let zeroLen = (k == 0) ? 1 : k &+ 2
             demand(signLen &+ zeroLen <= MAX_LEN, "the plain zero fits the buffer")
-            ascii[0] = ascii_minus // overwritten by the '0' when unsigned
+            ascii[0] = UInt8(ascii_minus) // overwritten by the '0' when unsigned
             for i in 0..<zeroLen {
                 ascii[signLen &+ i] = PLAIN_ZERO[i]
             }
@@ -696,11 +702,11 @@ public enum Decimal128TextCodec {
         let plusLen = (qExp > 0) ? 1 : 0
         let baseLen = signLen &+ ZERO_EXP_TEXT.count &+ plusLen
         demand(baseLen &+ 6 <= MAX_LEN, "the exponent-form zero fits the buffer")
-        ascii[0] = ascii_minus // overwritten by the '0' when unsigned
+        ascii[0] = UInt8(ascii_minus) // overwritten by the '0' when unsigned
         for i in 0..<ZERO_EXP_TEXT.count {
             ascii[signLen &+ i] = ZERO_EXP_TEXT[i]
         }
-        ascii[signLen &+ ZERO_EXP_TEXT.count] = ascii_plus // overwritten by the '-' when qExp < 0
+        ascii[signLen &+ ZERO_EXP_TEXT.count] = UInt8(ascii_plus) // overwritten by the '-' when qExp < 0
         return baseLen &+ appendIntBytes(ascii, baseLen, qExp)
     }
 
@@ -711,7 +717,7 @@ public enum Decimal128TextCodec {
         var signLen = 0
         var magnitude = v
         if v < 0 {
-            ascii[off] = ascii_minus
+            ascii[off] = UInt8(ascii_minus)
             signLen = 1
             magnitude = -v
         }
@@ -752,7 +758,7 @@ public enum Decimal128TextCodec {
         demand(totalLen <= MAX_LEN, "the integer form fits the buffer")
         // written unconditionally: when there is no sign the first digit
         // overwrites it, which is cheaper than branching
-        ascii[0] = ascii_minus
+        ascii[0] = UInt8(ascii_minus)
         u128ToAscii(digitLen, dw1, dw0, ascii, signLen)
         return totalLen
     }
@@ -772,10 +778,10 @@ public enum Decimal128TextCodec {
         let decimalPointLen = 1
         let totalLen = signLen &+ leadingZeroCount &+ decimalPointLen &+ digitLen
         demand(totalLen <= MAX_LEN, "the fixed-point form fits the buffer")
-        ascii[0] = ascii_minus
+        ascii[0] = UInt8(ascii_minus)
         if signLen <= leadingZeroCount {
             for i in signLen...leadingZeroCount { // there is one extra here
-                ascii[i] = ascii_0
+                ascii[i] = UInt8(ascii_0)
             }
         }
         u128ToAscii(digitLen, dw1, dw0, ascii, signLen &+ leadingZeroCount)
@@ -784,7 +790,7 @@ public enum Decimal128TextCodec {
             ascii[i] = ascii[i &- 1]
             i &-= 1
         }
-        ascii[totalLen &- digitsRightOfDecimal &- 1] = ascii_dot
+        ascii[totalLen &- digitsRightOfDecimal &- 1] = UInt8(ascii_dot)
         return totalLen
     }
 
@@ -801,14 +807,14 @@ public enum Decimal128TextCodec {
                                                        _ dw1: UInt64, _ dw0: UInt64) -> Int {
         verify(digitLen > 0)
         let eExp = qExp &+ (digitLen &- 1)
-        // the reference computes this branchlessly off a 32-bit sign shift;
-        // Swift's Int is 64-bit and the exponent is bounded well inside it
+        // this can be computed branchlessly off a 32-bit sign shift; Swift's
+        // Int is 64-bit and the exponent is bounded well inside it
         let eExpAbs = eExp < 0 ? -eExp : eExp
         let signLen = sign ? 1 : 0
         let decimalPointLen = digitLen > 1 ? 1 : 0
         let expELen = 1
         let expSignLen = 1
-        let expSignByte = eExp < 0 ? ascii_minus : ascii_plus
+        let expSignByte = UInt8(eExp < 0 ? ascii_minus : ascii_plus)
         let expDigitLen: Int
         if eExpAbs >= 1000 {
             expDigitLen = 4
@@ -821,14 +827,14 @@ public enum Decimal128TextCodec {
         }
         let totalLen = signLen &+ decimalPointLen &+ digitLen &+ expELen &+ expSignLen &+ expDigitLen
         demand(totalLen <= MAX_LEN, "the scientific form fits the buffer")
-        ascii[0] = ascii_minus
+        ascii[0] = UInt8(ascii_minus)
         u128ToAscii(digitLen, dw1, dw0, ascii, signLen &+ decimalPointLen)
         if decimalPointLen > 0 {
             ascii[signLen] = ascii[signLen &+ 1]
-            ascii[signLen &+ 1] = ascii_dot
+            ascii[signLen &+ 1] = UInt8(ascii_dot)
         }
         let iE = signLen &+ decimalPointLen &+ digitLen
-        ascii[iE] = ascii_E
+        ascii[iE] = UInt8(ascii_E)
         ascii[iE &+ 1] = expSignByte
         renderTailDigitsBeforeIndex(expDigitLen, UInt64(eExpAbs), ascii, totalLen)
         return totalLen
@@ -948,14 +954,15 @@ public enum Decimal128TextCodec {
         let h = gh &- (g &* 10)
 
         demand(offMaxx &- 8 >= 0, "the eight digits are inside the buffer")
-        ascii[offMaxx &- 8] = ascii_0 &+ UInt8(truncatingIfNeeded: a)
-        ascii[offMaxx &- 7] = ascii_0 &+ UInt8(truncatingIfNeeded: b)
-        ascii[offMaxx &- 6] = ascii_0 &+ UInt8(truncatingIfNeeded: c)
-        ascii[offMaxx &- 5] = ascii_0 &+ UInt8(truncatingIfNeeded: d)
-        ascii[offMaxx &- 4] = ascii_0 &+ UInt8(truncatingIfNeeded: e)
-        ascii[offMaxx &- 3] = ascii_0 &+ UInt8(truncatingIfNeeded: f)
-        ascii[offMaxx &- 2] = ascii_0 &+ UInt8(truncatingIfNeeded: g)
-        ascii[offMaxx &- 1] = ascii_0 &+ UInt8(truncatingIfNeeded: h)
+        let zero = UInt8(ascii_0)
+        ascii[offMaxx &- 8] = zero &+ UInt8(truncatingIfNeeded: a)
+        ascii[offMaxx &- 7] = zero &+ UInt8(truncatingIfNeeded: b)
+        ascii[offMaxx &- 6] = zero &+ UInt8(truncatingIfNeeded: c)
+        ascii[offMaxx &- 5] = zero &+ UInt8(truncatingIfNeeded: d)
+        ascii[offMaxx &- 4] = zero &+ UInt8(truncatingIfNeeded: e)
+        ascii[offMaxx &- 3] = zero &+ UInt8(truncatingIfNeeded: f)
+        ascii[offMaxx &- 2] = zero &+ UInt8(truncatingIfNeeded: g)
+        ascii[offMaxx &- 1] = zero &+ UInt8(truncatingIfNeeded: h)
     }
 
     /// Render exactly `renderDigitCount` decimal digits of `dw` into `ascii`,
@@ -973,6 +980,7 @@ public enum Decimal128TextCodec {
         var t = dw
         var remainingDigitCount = renderDigitCount
         var ib = offMaxx
+        let zero = UInt8(ascii_0)
         demand(offMaxx &- renderDigitCount >= 0, "the digits are inside the buffer")
         while remainingDigitCount >= 4 {
             let t0 = unsignedMulHi(t, M_U64_DIV_1E4) >> S_U64_DIV_1E4
@@ -984,10 +992,10 @@ public enum Decimal128TextCodec {
             let b = ab &- (a &* 10)
             let c = (cd &* M_U32_DIV_1E1) >> S_U32_DIV_1E1
             let d = cd &- (c &* 10)
-            ascii[ib &- 4] = ascii_0 &+ UInt8(truncatingIfNeeded: a)
-            ascii[ib &- 3] = ascii_0 &+ UInt8(truncatingIfNeeded: b)
-            ascii[ib &- 2] = ascii_0 &+ UInt8(truncatingIfNeeded: c)
-            ascii[ib &- 1] = ascii_0 &+ UInt8(truncatingIfNeeded: d)
+            ascii[ib &- 4] = zero &+ UInt8(truncatingIfNeeded: a)
+            ascii[ib &- 3] = zero &+ UInt8(truncatingIfNeeded: b)
+            ascii[ib &- 2] = zero &+ UInt8(truncatingIfNeeded: c)
+            ascii[ib &- 1] = zero &+ UInt8(truncatingIfNeeded: d)
             ib &-= 4
             remainingDigitCount &-= 4
         }
@@ -995,7 +1003,7 @@ public enum Decimal128TextCodec {
             let divTen = (t &* M_U32_DIV_1E1) >> S_U32_DIV_1E1
             let digit = t &- (divTen &* 10)
             ib &-= 1
-            ascii[ib] = ascii_0 &+ UInt8(truncatingIfNeeded: digit)
+            ascii[ib] = zero &+ UInt8(truncatingIfNeeded: digit)
             t = divTen
             remainingDigitCount &-= 1
         }
@@ -1006,57 +1014,67 @@ public enum Decimal128TextCodec {
     // MARK: - Encode: text -> encoding
     // ==================================================================
 
-    private static let ascii_9: UInt8 = 0x39
-    private static let ascii_e: UInt8 = 0x65
-    private static let ascii_underscore: UInt8 = 0x5F
-    private static let ascii_lparen: UInt8 = 0x28
-    private static let ascii_rparen: UInt8 = 0x29
+    private static let ascii_9: Int = 0x39
+    private static let ascii_e: Int = 0x65
+    private static let ascii_underscore: Int = 0x5F
+    private static let ascii_lparen: Int = 0x28
+    private static let ascii_rparen: Int = 0x29
+    private static let ascii_i: Int = 0x69
+    private static let ascii_n: Int = 0x6E
+    private static let ascii_a: Int = 0x61
+    private static let ascii_f: Int = 0x66
+    private static let ascii_y: Int = 0x79
+    private static let ascii_q: Int = 0x71
 
-    /// Read the byte at `pos` and advance, or return NUL at end of input.
+    /// The code of the byte at `index`, or -1 past the end of the buffer.
     ///
-    /// The reference reads a Kotlin `String` through a `getOrNul` accessor that
-    /// yields NUL forever past the end. Swift strings are not randomly indexable
-    /// by integer, so the public entry points hand the parser the UTF-8 bytes
-    /// once and this reads those. Every byte a numeral can contain is ASCII, so
-    /// a multi-byte sequence arrives as bytes >= 0x80 and is rejected as an
-    /// unrecognized character, which is the same answer the reference gives.
+    /// The parsers walk the input as byte codes, so end-of-input is one more
+    /// code value rather than a bound test at every read. -1 is not a byte,
+    /// which keeps NUL an ordinary input byte -- and an invalid one -- instead
+    /// of doubling as the terminator: a Swift `String` carries its own length
+    /// and can hold one, and it is rejected.
+    ///
+    /// Swift dropped the increment operator in Swift 3, so the advance is its
+    /// own statement at each call rather than riding in the index. Swift
+    /// strings are also not randomly indexable by integer, so the public entry
+    /// points open a UTF-8 buffer over the input with `withUTF8` and this reads
+    /// that. Every byte a numeral can contain is ASCII, so a multi-byte
+    /// sequence arrives as bytes >= 0x80 and is rejected as an unrecognized
+    /// character.
     @inline(__always)
-    private static func chAt(_ str: [UInt8], _ pos: inout Int) -> UInt8 {
-        if pos < str.count {
-            let c = str[pos]
-            pos &+= 1
-            return c
-        }
-        return 0
+    private static func codeAt(_ str: UnsafeBufferPointer<UInt8>, _ index: Int) -> Int {
+        (index >= 0 && index < str.count) ? Int(str[index]) : -1
     }
 
     @inline(__always)
-    private static func isDigit(_ ch: UInt8) -> Bool { (ch >= ascii_0 && ch <= ascii_9) }
+    private static func isDigit(_ ch: Int) -> Bool { (ch >= ascii_0 && ch <= ascii_9) }
 
     /// Top-level dispatcher. Reads an optional sign, then dispatches by leading
     /// character to the finite-value, infinity or NaN parser.
     ///
     /// The leading character is passed through to the dispatched parser so it
     /// does not have to re-read what the dispatcher already consumed.
-    private static func encodeStringOrError(_ out: inout Words, formatIsBid: Bool, str: [UInt8]) -> String? {
+    private static func encodeStringOrError(_ out: inout Words, formatIsBid: Bool, str: UnsafeBufferPointer<UInt8>) -> String? {
         var pos = 0
-        let chFirst = chAt(str, &pos)
+        let chFirst = codeAt(str, pos)
+        pos &+= 1
         var ch = chFirst
         let sign = (ch == ascii_minus)
         if (ch == ascii_plus || ch == ascii_minus) {
-            ch = chAt(str, &pos)
+            ch = codeAt(str, pos)
+            pos &+= 1
         }
         if (isDigit(ch) || ch == ascii_dot) {
             return parseFiniteValueText(&out, formatIsBid, sign, ch, str, pos)
         }
         let chLower = ch | 0x20
-        if (chLower == UInt8(ascii: "i")) {
+        if (chLower == ascii_i) {
             return parseInfinityText(&out, sign, ch, str, pos)
         }
-        if (chLower == UInt8(ascii: "n") || chLower == UInt8(ascii: "s") || chLower == UInt8(ascii: "q")) {
+        if (chLower == ascii_n || chLower == ascii_s || chLower == ascii_q) {
             return parseNanText(&out, formatIsBid, sign, ch, str, pos)
         }
-        if (chFirst == 0) {
+        if (chFirst == -1) {
             return "empty string"
         }
         return "invalid format"
@@ -1064,25 +1082,26 @@ public enum Decimal128TextCodec {
 
     /// Parse the keyword `Infinity`, or its 3-letter abbreviation `Inf`,
     /// case-insensitively.
-    private static func parseInfinityText(_ out: inout Words, _ sign: Bool, _ chFirst: UInt8,
-                                          _ str: [UInt8], _ startPos: Int) -> String? {
+    private static func parseInfinityText(_ out: inout Words, _ sign: Bool, _ chFirst: Int,
+                                          _ str: UnsafeBufferPointer<UInt8>, _ startPos: Int) -> String? {
         var pos = startPos
         var ch = chFirst
-        var chPrevCode: UInt8 = 0
+        var chPrevCode: Int = 0
         let target = Array("infinity".utf8)
         for i in 0..<8 {
-            let targetCode = target[i]
+            let targetCode = Int(target[i])
             if ((ch | 0x20) != targetCode) {
-                if (ch == 0) {
+                if (ch == -1) {
                     break
                 } else {
                     return "failure parsing infinity"
                 }
             }
             chPrevCode = ch | 0x20
-            ch = chAt(str, &pos)
+            ch = codeAt(str, pos)
+            pos &+= 1
         }
-        if (ch != 0 || (chPrevCode != UInt8(ascii: "f") && chPrevCode != UInt8(ascii: "y"))) {
+        if (ch != -1 || (chPrevCode != ascii_f && chPrevCode != ascii_y)) {
             return "failure parsing Infinity"
         }
         out = (INF_PATTERN_HI | (sign ? SIGN_BIT : 0), 0)
@@ -1102,8 +1121,7 @@ public enum Decimal128TextCodec {
     /// `NaN(1]` and `NaN()` are all rejected, and `NaN[1]` / `NaN{1}` are not
     /// this form at all.
     ///
-    /// The full decimal128 ports accept the same spelling; the codecs had it
-    /// first, and the ports took it on 2026-08-23. The reason it exists at all
+    /// The reason this spelling exists at all
     /// is that C's own `strtod` reads
     /// `NAN(n-char-sequence)`, so the spelling reaches a caller from the
     /// platform itself. The resemblance stops at the parentheses -- strtod's
@@ -1116,27 +1134,31 @@ public enum Decimal128TextCodec {
     /// and `}` ANYWHERE, so it read `NaN(1)2(3)` as payload 123. That is not
     /// this, and stays rejected.
     private static func parseNanText(_ out: inout Words, _ formatIsBid: Bool, _ sign: Bool,
-                                     _ chFirst: UInt8, _ str: [UInt8], _ startPos: Int) -> String? {
+                                     _ chFirst: Int, _ str: UnsafeBufferPointer<UInt8>, _ startPos: Int) -> String? {
         var pos = startPos
         var ch = chFirst
-        let hasS = ((ch | 0x20) == UInt8(ascii: "s"))
-        let hasQ = ((ch | 0x20) == UInt8(ascii: "q"))
+        let hasS = ((ch | 0x20) == ascii_s)
+        let hasQ = ((ch | 0x20) == ascii_q)
         if (hasQ || hasS) {
-            ch = chAt(str, &pos)
+            ch = codeAt(str, pos)
+            pos &+= 1
         }
-        if ((ch | 0x20) != UInt8(ascii: "n") ||
-            (chAt(str, &pos) | 0x20) != UInt8(ascii: "a") ||
-            (chAt(str, &pos) | 0x20) != UInt8(ascii: "n")) {
+        if ((ch | 0x20) != ascii_n ||
+            (codeAt(str, pos) | 0x20) != ascii_a ||
+            (codeAt(str, pos &+ 1) | 0x20) != ascii_n) {
             return "failure parsing NaN"
         }
+        pos &+= 2
         var payloadDw0: UInt64 = 0
         var payloadDw1: UInt64 = 0
-        ch = chAt(str, &pos)
+        ch = codeAt(str, pos)
+        pos &+= 1
         let hasParen = (ch == ascii_lparen)
         if (hasParen) {
-            ch = chAt(str, &pos)
+            ch = codeAt(str, pos)
+            pos &+= 1
         }
-        if (hasParen || ch != 0) {
+        if (hasParen || ch != -1) {
             var accumDigitCount = 0
             var accum19a: UInt64 = 0
             var accum19b: UInt64 = 0
@@ -1159,7 +1181,8 @@ public enum Decimal128TextCodec {
                     // read.
                     accum19b = (accum19b &* 10) &+ d
                 }
-                ch = chAt(str, &pos)
+                ch = codeAt(str, pos)
+                pos &+= 1
             }
             if (accumDigitCount == 0) {
                 return hasParen ? "failure parsing NaN" : "non-digit NaN payload character"
@@ -1167,12 +1190,12 @@ public enum Decimal128TextCodec {
             if (hasParen) {
                 // the ')' must be present and must end the input
                 if (ch != ascii_rparen) {
-                    return (ch == 0) ? "failure parsing NaN" : "non-digit NaN payload character"
+                    return (ch == -1) ? "failure parsing NaN" : "non-digit NaN payload character"
                 }
-                if (chAt(str, &pos) != 0) {
+                if (codeAt(str, pos) != -1) {
                     return "failure parsing NaN"
                 }
-            } else if (ch != 0) {
+            } else if (ch != -1) {
                 return "non-digit NaN payload character"
             }
             if (accumDigitCount > 33) {
@@ -1208,7 +1231,7 @@ public enum Decimal128TextCodec {
     /// Sign comes from `sign`, already consumed by the dispatcher; `chFirst` is
     /// the first digit or `.` and is processed by the main loop.
     private static func parseFiniteValueText(_ out: inout Words, _ formatIsBid: Bool, _ sign: Bool,
-                                             _ chFirst: UInt8, _ str: [UInt8], _ startPos: Int) -> String? {
+                                             _ chFirst: Int, _ str: UnsafeBufferPointer<UInt8>, _ startPos: Int) -> String? {
         var pos = startPos
         var residue = EXACT
 
@@ -1221,7 +1244,7 @@ public enum Decimal128TextCodec {
         var prevWasDigit = false
         var afterUnderscore = false
 
-        verify(chFirst != 0)
+        verify(chFirst != -1)
         var ch = chFirst
         var fractionalDigitCount = 0
         var accum19a: UInt64 = 0
@@ -1232,7 +1255,7 @@ public enum Decimal128TextCodec {
             if (isDigit(ch)) {
                 let d = Int(ch &- ascii_0)
                 hasCoefficientDigit = true
-                // count while flushing leading zeros. The reference does this
+                // count while flushing leading zeros. This can be done
                 // branchlessly off a 32-bit sign shift; Swift's Int is 64-bit,
                 // so the same thing is said directly.
                 if (significantDigitCount != 0 || d != 0) {
@@ -1270,7 +1293,8 @@ public enum Decimal128TextCodec {
                 hasDot = true
                 prevWasDigit = false
             }
-            ch = chAt(str, &pos)
+            ch = codeAt(str, pos)
+            pos &+= 1
         }
         if (afterUnderscore) {
             return "invalid underscore location"
@@ -1280,10 +1304,12 @@ public enum Decimal128TextCodec {
         }
         // this path has at least one digit
         if (ch == ascii_E || ch == ascii_e) {
-            ch = chAt(str, &pos)
+            ch = codeAt(str, pos)
+            pos &+= 1
             if (ch == ascii_plus || ch == ascii_minus) {
                 expSign = (ch == ascii_minus)
-                ch = chAt(str, &pos)
+                ch = codeAt(str, pos)
+                pos &+= 1
             }
             var hasExpDigit = false
             var expSignificantDigitCount = 0
@@ -1310,7 +1336,8 @@ public enum Decimal128TextCodec {
                     prevWasDigit = true
                     afterUnderscore = false
                 }
-                ch = chAt(str, &pos)
+                ch = codeAt(str, pos)
+                pos &+= 1
             }
             if (afterUnderscore) {
                 return "invalid underscore location"
@@ -1323,7 +1350,7 @@ public enum Decimal128TextCodec {
                 exp = 9999
             }
         }
-        if (ch != 0) {
+        if (ch != -1) {
             return "unexpected char"
         }
         // we have at least one digit
@@ -1533,8 +1560,8 @@ public enum Decimal128TextCodec {
         // never once executed -- and therefore has never been verified to work
         // -- it is removed and the invariant is enforced.
         //
-        // Measured on the C port, which is a translation of the same reference:
-        // zero executions across the 87k-row shared corpus, 400,000 random
+        // Measured: zero executions across the 87k-row shared corpus,
+        // 400,000 random
         // numerals, and 76,280 finalize calls driven by inputs of up to 5,000
         // digits, where the widest coefficient ever seen here was 34.
         //
@@ -1543,8 +1570,8 @@ public enum Decimal128TextCodec {
         // out-of-range coefficient silently. It cannot fire on a caller's data
         // -- no input reaches it -- only on a future caller that breaks the
         // invariant, which is exactly when a loud failure is wanted. A caller
-        // that is not a parser needs the truncation step back; it is live in
-        // every full port's Finalize, where multiply and FMA do reach it.
+        // that is not a parser needs the truncation step back, as a multiply
+        // or an FMA would.
         demand(calcDigitLen128(dw1In, dw0In) <= 34, "coefficient wider than precision")
 
         // Step 4: underflow. With no precision truncation to outrank it, the
@@ -1807,9 +1834,8 @@ public enum Decimal128TextCodec {
     // a binary integer, DPD as a leading digit plus eleven declets.
     //
     // Both directions are pure boolean arithmetic -- Cowlishaw's dpd2bcd and
-    // bcd2dpd -- rather than lookup tables, which is what the reference measured
-    // as the smaller and faster choice and what transcribes unchanged into the
-    // sibling ports.
+    // bcd2dpd -- rather than lookup tables, measured as the smaller and faster
+    // choice.
     // ==================================================================
 
     /// Decode up to seven packed DPD declets into a binary integer.
@@ -1824,7 +1850,7 @@ public enum Decimal128TextCodec {
         while (rest != 0) {
             bin &+= dpdDecodeDeclet(rest & 0x3FF) &* multiplier
             // The last iteration multiplies past 10^18 and the product is never
-            // used, since `rest` is zero by then. The reference wraps here too.
+            // used, since `rest` is zero by then, so it is let wrap.
             multiplier &*= 1000
             rest >>= 10
         }
@@ -2049,8 +2075,8 @@ public enum Decimal128TextCodec {
 
     /// High 64 bits of the 128-bit product `x * y`.
     ///
-    /// The reference decomposes this into four 32x32 partial products because
-    /// the JVM has no unsigned 64-bit multiply-high; Swift has one on the type.
+    /// Where no unsigned 64-bit multiply-high exists this decomposes into four
+    /// 32x32 partial products; Swift has one on the type.
     @inline(__always)
     private static func unsignedMulHi(_ x: UInt64, _ y: UInt64) -> UInt64 {
         return x.multipliedFullWidth(by: y).high
