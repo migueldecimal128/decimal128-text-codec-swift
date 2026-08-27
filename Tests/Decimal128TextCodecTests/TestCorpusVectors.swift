@@ -131,6 +131,8 @@ struct TestCorpusVectors {
                 #expect(b.error == d.error,
                         "error line \(row.lineNumber): the formats disagree on <\(row.text)>")
             }
+            #expect(b.error == row.status,
+                    "error line \(row.lineNumber): <\(row.text)> returned <\(b.error ?? "nil")>, corpus says \(row.status)")
             #expect(b.bits == row.bid, "error line \(row.lineNumber): bid <\(row.text)> left \(Hex.format32(b.bits))")
             #expect(d.bits == row.bid, "error line \(row.lineNumber): dpd <\(row.text)> left \(Hex.format32(d.bits))")
         }

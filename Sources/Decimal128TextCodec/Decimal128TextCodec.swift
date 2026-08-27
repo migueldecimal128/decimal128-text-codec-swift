@@ -239,8 +239,11 @@ public enum Decimal128TextCodec {
     /// failure returns a human-readable message and writes the canonical
     /// positive quiet NaN, so a caller who discards the message still observes
     /// a legal IEEE 754-2019 datum rather than a stale value. The exact
-    /// wording of the message is not part of the contract and may change
-    /// between versions.
+    /// message is the engine's ParseStatus name for the failure --
+    /// EMPTY_STRING, INVALID_FORMAT, UNEXPECTED_CHAR, DOUBLE_DOT,
+    /// NO_COEFFICIENT_DIGIT, NO_EXPONENT_DIGIT, INVALID_UNDERSCORE_LOCATION,
+    /// FAILURE_PARSING_INFINITY or FAILURE_PARSING_NAN -- and the conformance
+    /// suite asserts it against the shared corpus, so it is part of the contract.
     ///
     /// Accepted input:
     ///
@@ -299,8 +302,11 @@ public enum Decimal128TextCodec {
     /// failure returns a human-readable message and writes the canonical
     /// positive quiet NaN, so a caller who discards the message still observes
     /// a legal IEEE 754-2019 datum rather than a stale value. The exact
-    /// wording of the message is not part of the contract and may change
-    /// between versions.
+    /// message is the engine's ParseStatus name for the failure --
+    /// EMPTY_STRING, INVALID_FORMAT, UNEXPECTED_CHAR, DOUBLE_DOT,
+    /// NO_COEFFICIENT_DIGIT, NO_EXPONENT_DIGIT, INVALID_UNDERSCORE_LOCATION,
+    /// FAILURE_PARSING_INFINITY or FAILURE_PARSING_NAN -- and the conformance
+    /// suite asserts it against the shared corpus, so it is part of the contract.
     ///
     /// Accepted input:
     ///
@@ -1075,9 +1081,9 @@ public enum Decimal128TextCodec {
             return parseNanText(&out, formatIsBid, sign, ch, str, pos)
         }
         if (chFirst == -1) {
-            return "empty string"
+            return "EMPTY_STRING"
         }
-        return "invalid format"
+        return "INVALID_FORMAT"
     }
 
     /// Parse the keyword `Infinity`, or its 3-letter abbreviation `Inf`,
@@ -1094,7 +1100,7 @@ public enum Decimal128TextCodec {
                 if (ch == -1) {
                     break
                 } else {
-                    return "failure parsing Infinity"
+                    return "FAILURE_PARSING_INFINITY"
                 }
             }
             chPrevCode = ch | 0x20
@@ -1102,7 +1108,7 @@ public enum Decimal128TextCodec {
             pos &+= 1
         }
         if (ch != -1 || (chPrevCode != ascii_f && chPrevCode != ascii_y)) {
-            return "failure parsing Infinity"
+            return "FAILURE_PARSING_INFINITY"
         }
         out = (INF_PATTERN_HI | (sign ? SIGN_BIT : 0), 0)
         return nil
@@ -1146,7 +1152,7 @@ public enum Decimal128TextCodec {
         if ((ch | 0x20) != ascii_n ||
             (codeAt(str, pos) | 0x20) != ascii_a ||
             (codeAt(str, pos &+ 1) | 0x20) != ascii_n) {
-            return "failure parsing NaN"
+            return "FAILURE_PARSING_NAN"
         }
         pos &+= 2
         var payloadDw0: UInt64 = 0
@@ -1185,18 +1191,18 @@ public enum Decimal128TextCodec {
                 pos &+= 1
             }
             if (accumDigitCount == 0) {
-                return hasParen ? "failure parsing NaN" : "non-digit NaN payload character"
+                return hasParen ? "FAILURE_PARSING_NAN" : "FAILURE_PARSING_NAN"
             }
             if (hasParen) {
                 // the ')' must be present and must end the input
                 if (ch != ascii_rparen) {
-                    return (ch == -1) ? "failure parsing NaN" : "non-digit NaN payload character"
+                    return (ch == -1) ? "FAILURE_PARSING_NAN" : "FAILURE_PARSING_NAN"
                 }
                 if (codeAt(str, pos) != -1) {
-                    return "failure parsing NaN"
+                    return "FAILURE_PARSING_NAN"
                 }
             } else if (ch != -1) {
-                return "non-digit NaN payload character"
+                return "FAILURE_PARSING_NAN"
             }
             if (accumDigitCount > 33) {
                 // IEEE754-2019 3.5.2 Encodings
@@ -1279,16 +1285,16 @@ public enum Decimal128TextCodec {
                 afterUnderscore = false
             } else if (ch == ascii_underscore) {
                 if (!prevWasDigit) {
-                    return "invalid underscore location"
+                    return "INVALID_UNDERSCORE_LOCATION"
                 }
                 prevWasDigit = false
                 afterUnderscore = true
             } else { // '.'
                 if (afterUnderscore) {
-                    return "invalid underscore location"
+                    return "INVALID_UNDERSCORE_LOCATION"
                 }
                 if (hasDot) {
-                    return "double radix dot"
+                    return "DOUBLE_DOT"
                 }
                 hasDot = true
                 prevWasDigit = false
@@ -1297,10 +1303,10 @@ public enum Decimal128TextCodec {
             pos &+= 1
         }
         if (afterUnderscore) {
-            return "invalid underscore location"
+            return "INVALID_UNDERSCORE_LOCATION"
         }
         if (!hasCoefficientDigit) {
-            return "no coefficient digit"
+            return "NO_COEFFICIENT_DIGIT"
         }
         // this path has at least one digit
         if (ch == ascii_E || ch == ascii_e) {
@@ -1318,7 +1324,7 @@ public enum Decimal128TextCodec {
             while (isDigit(ch) || ch == ascii_underscore) {
                 if (ch == ascii_underscore) {
                     if (!prevWasDigit) {
-                        return "invalid underscore location"
+                        return "INVALID_UNDERSCORE_LOCATION"
                     }
                     prevWasDigit = false
                     afterUnderscore = true
@@ -1340,10 +1346,10 @@ public enum Decimal128TextCodec {
                 pos &+= 1
             }
             if (afterUnderscore) {
-                return "invalid underscore location"
+                return "INVALID_UNDERSCORE_LOCATION"
             }
             if (!hasExpDigit) {
-                return "no exponent digit"
+                return "NO_EXPONENT_DIGIT"
             }
             // clamp exp to 9999 once after the loop
             if (expSignificantDigitCount > 4) {
@@ -1351,7 +1357,7 @@ public enum Decimal128TextCodec {
             }
         }
         if (ch != -1) {
-            return "unexpected char"
+            return "UNEXPECTED_CHAR"
         }
         // we have at least one digit
         var dw0 = accum19a
