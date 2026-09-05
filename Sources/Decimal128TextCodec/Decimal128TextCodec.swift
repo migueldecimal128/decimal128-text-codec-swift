@@ -1128,13 +1128,13 @@ public enum Decimal128TextCodec {
     /// this form at all.
     ///
     /// The reason this spelling exists at all
-    /// is that C's own `strtod` reads
+    /// is that the platform's own `strtod` reads
     /// `NAN(n-char-sequence)`, so the spelling reaches a caller from the
     /// platform itself. The resemblance stops at the parentheses -- strtod's
     /// sequence is letters, digits and underscores read as an
     /// implementation-defined integer (`NAN(abc)` and `NAN(0x1c8)` are legal
     /// there), while a decimal128 payload is decimal digits. This is a
-    /// paren-tolerant spelling of our own payload syntax, not C's.
+    /// paren-tolerant spelling of our own payload syntax, not strtod's.
     ///
     /// The legacy base this family descends from skipped `(`, `)`, `[`, `]`, `{`
     /// and `}` ANYWHERE, so it read `NaN(1)2(3)` as payload 123. That is not
