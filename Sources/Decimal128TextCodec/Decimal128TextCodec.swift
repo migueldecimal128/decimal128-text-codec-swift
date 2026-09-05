@@ -162,10 +162,12 @@ public enum Decimal128TextCodec {
     /// exponent field cannot exceed four digits inside decimal128's range, so
     /// neither number can drift without the format itself changing.
     ///
-    /// Every write in the renderers is guarded against this bound. Sizing it
-    /// exactly rather than generously is what turns those guards into real
-    /// checks: with slack, an error in the arithmetic above would quietly
-    /// consume the slack instead of firing.
+    /// The renderers are checked against this bound once, on entry, rather
+    /// than at every write: the buffer is confirmed to be at least this long
+    /// and the forms above are what guarantee nothing longer is produced.
+    /// Sizing it exactly rather than generously is what keeps the two halves
+    /// of that argument in contact; with slack, an error in the arithmetic
+    /// above would quietly consume the slack instead of showing up.
     ///
     /// A buffer passed to `bid128ToAscii(_:_:)` must be at least this long.
     /// No NUL is written, so no room is reserved for one.
@@ -362,8 +364,8 @@ public enum Decimal128TextCodec {
     // ------------------------------------------------------------------
     // Internal-state assertions
     //
-    // Two mechanisms: one is a debugging aid, the other guards a write into a
-    // caller's buffer.
+    // Two mechanisms: one is a debugging aid, the other a claim that must hold
+    // in every build.
     //
     //   verify   internal-consistency claims -- unreachable for ANY input, so a
     //            failure is a codec bug rather than bad data. Compiled out
@@ -371,10 +373,12 @@ public enum Decimal128TextCodec {
     //            debug builds only, so a release consumer never takes a trap
     //            inside the library on data they do not control.
     //
-    //   demand   buffer-sizing and invariant claims that guard a write or an
-    //            encode. A violation here traps, and it stays live in every
-    //            configuration because the
-    //            alternative is silently encoding an out-of-range value.
+    //   demand   the two claims that must hold in every configuration: that
+    //            the caller's buffer is at least MAX_LEN, checked once on
+    //            entry, and that a coefficient handed to the encoder is
+    //            inside the precision limit. A violation traps, because the
+    //            alternative is overrunning the buffer or silently encoding
+    //            an out-of-range value.
     // ------------------------------------------------------------------
 
     @inline(__always)
@@ -651,7 +655,6 @@ public enum Decimal128TextCodec {
     private static func infBytes(_ ascii: UnsafeMutableBufferPointer<UInt8>, _ sign: Bool) -> Int {
         let signLen = sign ? 1 : 0
         let totalLen = signLen &+ INFINITY_TEXT.count
-        demand(totalLen <= MAX_LEN, "Infinity fits the buffer")
         ascii[0] = UInt8(ascii_minus) // overwritten by the 'I' when unsigned
         for i in 0..<INFINITY_TEXT.count {
             ascii[signLen &+ i] = INFINITY_TEXT[i]
@@ -666,7 +669,6 @@ public enum Decimal128TextCodec {
         let sLen = isSignaling ? 1 : 0
         let wordOff = signLen &+ sLen
         let baseLen = wordOff &+ NAN_TEXT.count
-        demand(baseLen <= MAX_LEN, "the bare NaN fits the buffer")
         ascii[0] = UInt8(ascii_minus)   // overwritten by the 's' or the 'N' when unsigned
         ascii[signLen] = UInt8(ascii_s) // overwritten by the 'N' when quiet
         for i in 0..<NAN_TEXT.count {
@@ -680,7 +682,6 @@ public enum Decimal128TextCodec {
         }
         let digitLen = calcDigitLen128(payloadHi, payloadLo)
         let totalLen = baseLen &+ digitLen
-        demand(totalLen <= MAX_LEN, "the NaN payload fits the buffer")
         u128ToAscii(digitLen, payloadHi, payloadLo, ascii, baseLen)
         return totalLen
     }
@@ -691,7 +692,6 @@ public enum Decimal128TextCodec {
         if qExp <= 0 && qExp >= -6 {
             let k = -qExp
             let zeroLen = (k == 0) ? 1 : k &+ 2
-            demand(signLen &+ zeroLen <= MAX_LEN, "the plain zero fits the buffer")
             ascii[0] = UInt8(ascii_minus) // overwritten by the '0' when unsigned
             for i in 0..<zeroLen {
                 ascii[signLen &+ i] = PLAIN_ZERO[i]
@@ -707,7 +707,6 @@ public enum Decimal128TextCodec {
         // already taken every qExp in [-6, 0], so this branch never sees zero.
         let plusLen = (qExp > 0) ? 1 : 0
         let baseLen = signLen &+ ZERO_EXP_TEXT.count &+ plusLen
-        demand(baseLen &+ 6 <= MAX_LEN, "the exponent-form zero fits the buffer")
         ascii[0] = UInt8(ascii_minus) // overwritten by the '0' when unsigned
         for i in 0..<ZERO_EXP_TEXT.count {
             ascii[signLen &+ i] = ZERO_EXP_TEXT[i]
@@ -761,7 +760,6 @@ public enum Decimal128TextCodec {
         verify(digitLen > 0)
         let signLen = sign ? 1 : 0
         let totalLen = signLen &+ digitLen
-        demand(totalLen <= MAX_LEN, "the integer form fits the buffer")
         // written unconditionally: when there is no sign the first digit
         // overwrites it, which is cheaper than branching
         ascii[0] = UInt8(ascii_minus)
@@ -783,7 +781,6 @@ public enum Decimal128TextCodec {
         let signLen = sign ? 1 : 0
         let decimalPointLen = 1
         let totalLen = signLen &+ leadingZeroCount &+ decimalPointLen &+ digitLen
-        demand(totalLen <= MAX_LEN, "the fixed-point form fits the buffer")
         ascii[0] = UInt8(ascii_minus)
         if signLen <= leadingZeroCount {
             for i in signLen...leadingZeroCount { // there is one extra here
@@ -832,7 +829,6 @@ public enum Decimal128TextCodec {
             expDigitLen = 1
         }
         let totalLen = signLen &+ decimalPointLen &+ digitLen &+ expELen &+ expSignLen &+ expDigitLen
-        demand(totalLen <= MAX_LEN, "the scientific form fits the buffer")
         ascii[0] = UInt8(ascii_minus)
         u128ToAscii(digitLen, dw1, dw0, ascii, signLen &+ decimalPointLen)
         if decimalPointLen > 0 {
@@ -959,7 +955,6 @@ public enum Decimal128TextCodec {
         let g = (gh &* M_U32_DIV_1E1) >> S_U32_DIV_1E1
         let h = gh &- (g &* 10)
 
-        demand(offMaxx &- 8 >= 0, "the eight digits are inside the buffer")
         let zero = UInt8(ascii_0)
         ascii[offMaxx &- 8] = zero &+ UInt8(truncatingIfNeeded: a)
         ascii[offMaxx &- 7] = zero &+ UInt8(truncatingIfNeeded: b)
@@ -987,7 +982,6 @@ public enum Decimal128TextCodec {
         var remainingDigitCount = renderDigitCount
         var ib = offMaxx
         let zero = UInt8(ascii_0)
-        demand(offMaxx &- renderDigitCount >= 0, "the digits are inside the buffer")
         while remainingDigitCount >= 4 {
             let t0 = unsignedMulHi(t, M_U64_DIV_1E4) >> S_U64_DIV_1E4
             let abcd = t &- (t0 &* 10000)
