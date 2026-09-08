@@ -1282,6 +1282,9 @@ public enum Decimal128TextCodec {
         return totalLen
     }
 
+    /// Finite non-zero: pick the form. Integer when the quantum exponent is
+    /// zero, fixed-point when it is negative and the adjusted exponent is at
+    /// least `-6`, scientific otherwise — the GDAS auto-select rule.
     private static func fnzAscii(_ ascii: UnsafeMutableBufferPointer<UInt8>, _ sign: Bool,
                                  _ qExp: Int, _ dw1: UInt64, _ dw0: UInt64) -> Int {
         let digitLen = calcDigitLen128(dw1, dw0)
