@@ -286,16 +286,7 @@ public enum Decimal128TextCodec {
     ///   - text: the character sequence to parse.
     /// - Returns: `nil` on success, or a human-readable message on failure.
     public static func bid128Parse(_ out: inout UInt128, _ text: String) -> String? {
-        var words: Words = (0, 0)
-        var text = text
-        let errorStr = text.withUTF8 { str in
-            encodeStringOrError(&words, formatIsBid: true, str: str)
-        }
-        if errorStr != nil {
-            words = (QNAN_PATTERN_HI, 0)
-        }
-        out = joinWords(words)
-        return errorStr
+        parseInto(&out, formatIsBid: true, text)
     }
 
     /// Parse a decimal character sequence into a DPD128 encoding.
@@ -349,10 +340,20 @@ public enum Decimal128TextCodec {
     ///   - text: the character sequence to parse.
     /// - Returns: `nil` on success, or a human-readable message on failure.
     public static func dpd128Parse(_ out: inout UInt128, _ text: String) -> String? {
+        parseInto(&out, formatIsBid: false, text)
+    }
+
+    /// `out` is written on both paths -- the encoding on success, the canonical
+    /// positive quiet NaN on failure -- so the caller never reads back what was
+    /// there before the call. That is why a failure is reported beside the value
+    /// rather than in place of it: a caller who discards the message still holds
+    /// a legal IEEE 754-2019 datum.
+    private static func parseInto(_ out: inout UInt128, formatIsBid: Bool,
+                                  _ text: String) -> String? {
         var words: Words = (0, 0)
         var text = text
         let errorStr = text.withUTF8 { str in
-            encodeStringOrError(&words, formatIsBid: false, str: str)
+            encodeStringOrError(&words, formatIsBid: formatIsBid, str: str)
         }
         if errorStr != nil {
             words = (QNAN_PATTERN_HI, 0)
@@ -381,13 +382,19 @@ public enum Decimal128TextCodec {
     //            an out-of-range value.
     // ------------------------------------------------------------------
 
+    /// Unconditional abort marking unreachable code.
+    private static func impossible(_ message: String,
+                                   file: StaticString = #fileID, line: UInt = #line) -> Never {
+        fatalError("decimal128-text-codec: impossible state: \(message)", file: file, line: line)
+    }
+
     @inline(__always)
     private static func verify(_ condition: @autoclosure () -> Bool,
                                _ message: @autoclosure () -> String = "invariant",
                                file: StaticString = #fileID, line: UInt = #line) {
         #if VERIFY_ENABLED
         if !condition() {
-            fatalError("decimal128-text-codec: impossible state: \(message())", file: file, line: line)
+            impossible(message(), file: file, line: line)
         }
         #endif
     }
@@ -397,7 +404,7 @@ public enum Decimal128TextCodec {
                                _ message: @autoclosure () -> String = "invariant",
                                file: StaticString = #fileID, line: UInt = #line) {
         if !condition() {
-            fatalError("decimal128-text-codec: impossible state: \(message())", file: file, line: line)
+            impossible(message(), file: file, line: line)
         }
     }
 
@@ -547,13 +554,13 @@ public enum Decimal128TextCodec {
             coeffHi = 8 &+ UInt64(combination & 1)
         } else if (combination >> (W5 &- 5)) == 0b11110 {
             // if the top 5 bits are 0b11110 then Infinity
-            return infBytes(ascii, sign)
+            return infAscii(ascii, sign)
         } else {
             // if the top 5 bits are 0b11111 then NaN,
             // with the next bit determining signaling NaN
             verify((combination >> (W5 &- 5)) == 0b11111)
             let isSignaling = ((combination >> (W5 &- 6)) & 1) != 0
-            return nanBytes(ascii, sign, isSignaling, coeffTHi, bid128Lo)
+            return nanAscii(ascii, sign, isSignaling, coeffTHi, bid128Lo)
         }
 
         let dw1 = (coeffHi << (t &- 64)) | coeffTHi
@@ -564,9 +571,9 @@ public enum Decimal128TextCodec {
         if (dw1 | dw0) == 0 ||
             MAXX_COEFF_34_HI < dw1 ||
             (dw1 == MAXX_COEFF_34_HI && (MAXX_COEFF_34_LO &- 1) < dw0) {
-            return zerBytes(ascii, sign, qExp)
+            return zerAscii(ascii, sign, qExp)
         }
-        return fnzBytes(ascii, sign, qExp, dw1, dw0)
+        return fnzAscii(ascii, sign, qExp, dw1, dw0)
     }
 
     /// Render a DPD128 encoding into the caller's buffer.
@@ -602,7 +609,7 @@ public enum Decimal128TextCodec {
             qExp = ((expMSB << w) | expContinuation) &- BIAS
             d0 = 8 &+ UInt64((combination >> w) & 0b1)
         } else if (combination >> (W5 &- 5)) == 0b11110 {
-            return infBytes(ascii, sign)
+            return infAscii(ascii, sign)
         } else {
             verify((combination >> (W5 &- 5)) == 0b11111)
             isNaN = true
@@ -629,16 +636,16 @@ public enum Decimal128TextCodec {
             // is the wrapping sum, and the carry out of it feeds the high word.
             dw0 = (binHi &* TEN_POW_18) &+ binLo
             let carry: UInt64 = dw0 < binLo ? 1 : 0
-            dw1 = unsignedMulHi(binHi, TEN_POW_18) &+ carry
+            dw1 = mulhi64(binHi, TEN_POW_18) &+ carry
         }
 
         if isNaN {
-            return nanBytes(ascii, sign, isSignaling, dw1, dw0)
+            return nanAscii(ascii, sign, isSignaling, dw1, dw0)
         }
         if (dw1 | dw0) == 0 {
-            return zerBytes(ascii, sign, qExp)
+            return zerAscii(ascii, sign, qExp)
         }
-        return fnzBytes(ascii, sign, qExp, dw1, dw0)
+        return fnzAscii(ascii, sign, qExp, dw1, dw0)
     }
 
 
@@ -652,7 +659,7 @@ public enum Decimal128TextCodec {
     /// lengths 1 and `k + 2`.
     private static let PLAIN_ZERO = Array("0.000000".utf8)
 
-    private static func infBytes(_ ascii: UnsafeMutableBufferPointer<UInt8>, _ sign: Bool) -> Int {
+    private static func infAscii(_ ascii: UnsafeMutableBufferPointer<UInt8>, _ sign: Bool) -> Int {
         let signLen = sign ? 1 : 0
         let totalLen = signLen &+ INFINITY_TEXT.count
         ascii[0] = UInt8(ascii_minus) // overwritten by the 'I' when unsigned
@@ -662,7 +669,7 @@ public enum Decimal128TextCodec {
         return totalLen
     }
 
-    private static func nanBytes(_ ascii: UnsafeMutableBufferPointer<UInt8>, _ sign: Bool,
+    private static func nanAscii(_ ascii: UnsafeMutableBufferPointer<UInt8>, _ sign: Bool,
                                  _ isSignaling: Bool,
                                  _ payloadHi: UInt64, _ payloadLo: UInt64) -> Int {
         let signLen = sign ? 1 : 0
@@ -686,7 +693,7 @@ public enum Decimal128TextCodec {
         return totalLen
     }
 
-    private static func zerBytes(_ ascii: UnsafeMutableBufferPointer<UInt8>, _ sign: Bool,
+    private static func zerAscii(_ ascii: UnsafeMutableBufferPointer<UInt8>, _ sign: Bool,
                                  _ qExp: Int) -> Int {
         let signLen = sign ? 1 : 0
         if qExp <= 0 && qExp >= -6 {
@@ -699,10 +706,10 @@ public enum Decimal128TextCodec {
             return signLen &+ zeroLen
         }
         // A positive exponent needs an explicit '+'; a negative one prints its
-        // own '-' from appendIntBytes. Write the '+' unconditionally and let
-        // appendIntBytes land on top of it when qExp < 0 -- the same discipline
+        // own '-' from appendInt. Write the '+' unconditionally and let
+        // appendInt land on top of it when qExp < 0 -- the same discipline
         // as the leading sign, pointed the other way. It is correct only
-        // because appendIntBytes emits a '-' for a negative value and emits
+        // because appendInt emits a '-' for a negative value and emits
         // nothing for a positive one, and because the plain form above has
         // already taken every qExp in [-6, 0], so this branch never sees zero.
         let plusLen = (qExp > 0) ? 1 : 0
@@ -712,12 +719,12 @@ public enum Decimal128TextCodec {
             ascii[signLen &+ i] = ZERO_EXP_TEXT[i]
         }
         ascii[signLen &+ ZERO_EXP_TEXT.count] = UInt8(ascii_plus) // overwritten by the '-' when qExp < 0
-        return baseLen &+ appendIntBytes(ascii, baseLen, qExp)
+        return baseLen &+ appendInt(ascii, baseLen, qExp)
     }
 
     /// Write a signed decimal exponent at `off`, returning its length. The
     /// magnitude never exceeds 6176, so it is at most four digits.
-    private static func appendIntBytes(_ ascii: UnsafeMutableBufferPointer<UInt8>,
+    private static func appendInt(_ ascii: UnsafeMutableBufferPointer<UInt8>,
                                        _ off: Int, _ v: Int) -> Int {
         var signLen = 0
         var magnitude = v
@@ -740,22 +747,22 @@ public enum Decimal128TextCodec {
         return signLen &+ digitLen
     }
 
-    private static func fnzBytes(_ ascii: UnsafeMutableBufferPointer<UInt8>, _ sign: Bool,
+    private static func fnzAscii(_ ascii: UnsafeMutableBufferPointer<UInt8>, _ sign: Bool,
                                  _ qExp: Int, _ dw1: UInt64, _ dw0: UInt64) -> Int {
         let digitLen = calcDigitLen128(dw1, dw0)
         let eExp = qExp &+ (digitLen &- 1)
         if qExp == 0 {
-            return fnzToIntegerBytes(ascii, sign, digitLen, dw1, dw0)
+            return fnzToIntegerAscii(ascii, sign, digitLen, dw1, dw0)
         }
         if qExp <= 0 && eExp >= -6 {
-            return fnzToDecimalPointBytes(ascii, sign, qExp, digitLen, dw1, dw0)
+            return fnzToDecimalPointAscii(ascii, sign, qExp, digitLen, dw1, dw0)
         }
-        return fnzToNormalizedScientificBytes(ascii, sign, qExp, digitLen, dw1, dw0)
+        return fnzToNormalizedScientificAscii(ascii, sign, qExp, digitLen, dw1, dw0)
     }
 
     /// Format a finite non-zero value with `qExp == 0` as a plain integer
     /// sequence: no radix point, no exponent.
-    private static func fnzToIntegerBytes(_ ascii: UnsafeMutableBufferPointer<UInt8>, _ sign: Bool,
+    private static func fnzToIntegerAscii(_ ascii: UnsafeMutableBufferPointer<UInt8>, _ sign: Bool,
                                           _ digitLen: Int, _ dw1: UInt64, _ dw0: UInt64) -> Int {
         verify(digitLen > 0)
         let signLen = sign ? 1 : 0
@@ -773,7 +780,7 @@ public enum Decimal128TextCodec {
     /// Renders the coefficient digits, then shifts the trailing digits right by
     /// one position to open a slot for the radix point. Leading zeros are
     /// written directly into the buffer before the digits.
-    private static func fnzToDecimalPointBytes(_ ascii: UnsafeMutableBufferPointer<UInt8>, _ sign: Bool,
+    private static func fnzToDecimalPointAscii(_ ascii: UnsafeMutableBufferPointer<UInt8>, _ sign: Bool,
                                                _ qExp: Int, _ digitLen: Int,
                                                _ dw1: UInt64, _ dw0: UInt64) -> Int {
         let digitsRightOfDecimal = -qExp
@@ -805,7 +812,7 @@ public enum Decimal128TextCodec {
     /// and the absolute exponent. The sign is always written: `+` for
     /// non-negative exponents, `-` for negative, per the GDAS
     /// `to-scientific-string` form.
-    private static func fnzToNormalizedScientificBytes(_ ascii: UnsafeMutableBufferPointer<UInt8>, _ sign: Bool,
+    private static func fnzToNormalizedScientificAscii(_ ascii: UnsafeMutableBufferPointer<UInt8>, _ sign: Bool,
                                                        _ qExp: Int, _ digitLen: Int,
                                                        _ dw1: UInt64, _ dw0: UInt64) -> Int {
         verify(digitLen > 0)
@@ -849,8 +856,8 @@ public enum Decimal128TextCodec {
     /// Reciprocal-multiplication constants for unsigned `÷ 10^8` on a 64-bit
     /// dividend, exact for every input.
     ///
-    /// Compute `n / 10^8` as `unsignedMulHi(n, M_U64_DIV_1E8) >> S_U64_DIV_1E8`.
-    /// The shift is "+ 64 high" because `unsignedMulHi` already returns the
+    /// Compute `n / 10^8` as `mulhi64(n, M_U64_DIV_1E8) >> S_U64_DIV_1E8`.
+    /// The shift is "+ 64 high" because `mulhi64` already returns the
     /// upper 64 bits of the 128-bit product; the named shift combines with that
     /// to give the effective magic-number divide.
     private static let M_U64_DIV_1E8: UInt64 = 0x8000_0000_0000_0000 | 0x2BCC_7711_8461_CEFD
@@ -864,7 +871,7 @@ public enum Decimal128TextCodec {
     /// Three phases:
     ///
     ///  1. While `dw1T != 0`: peel 8 digits per outer iteration via three
-    ///     `÷ 10^8` divisions on rotating 96-bit chunks, using ``unsignedMulHi``
+    ///     `÷ 10^8` divisions on rotating 96-bit chunks, using ``mulhi64``
     ///     for the high half of each multi-word divide.
     ///  2. Once the value fits in 64 bits: peel 8 digits at a time via a single
     ///     `÷ 10^8` per iteration.
@@ -880,13 +887,13 @@ public enum Decimal128TextCodec {
         var ich = off &+ digitPrintCount
         var remainingDigitCount = digitPrintCount
         while dw1T != 0 {
-            let q2 = unsignedMulHi(dw1T, M_U64_DIV_1E8) >> S_U64_DIV_1E8
+            let q2 = mulhi64(dw1T, M_U64_DIV_1E8) >> S_U64_DIV_1E8
             let r2 = dw1T &- (q2 &* 100_000_000)
             let s2 = (r2 << 32) | (dw0T >> 32)
-            let q1 = unsignedMulHi(s2, M_U64_DIV_1E8) >> S_U64_DIV_1E8
+            let q1 = mulhi64(s2, M_U64_DIV_1E8) >> S_U64_DIV_1E8
             let r1 = s2 &- (q1 &* 100_000_000)
             let s1 = (r1 << 32) | (dw0T & MASK32)
-            let q0 = unsignedMulHi(s1, M_U64_DIV_1E8) >> S_U64_DIV_1E8
+            let q0 = mulhi64(s1, M_U64_DIV_1E8) >> S_U64_DIV_1E8
             let r0 = s1 &- (q0 &* 100_000_000)
             // q1 and q0 are each strictly below 2^32 -- r2 and r1 are remainders
             // mod 10^8 -- so this recombination cannot overflow
@@ -897,7 +904,7 @@ public enum Decimal128TextCodec {
             remainingDigitCount &-= 8
         }
         while remainingDigitCount >= 8 {
-            let t0 = unsignedMulHi(dw0T, M_U64_DIV_1E8) >> S_U64_DIV_1E8
+            let t0 = mulhi64(dw0T, M_U64_DIV_1E8) >> S_U64_DIV_1E8
             let r0 = dw0T &- (t0 &* 100_000_000)
             dw0T = t0
             render8DigitsBeforeIndex(r0, ascii, ich)
@@ -934,7 +941,7 @@ public enum Decimal128TextCodec {
     /// `÷ 10^2` twice to split each half into 2-digit pairs, then `÷ 10` four
     /// times for the individual digits.
     private static func render8DigitsBeforeIndex(_ dw: UInt64, _ ascii: UnsafeMutableBufferPointer<UInt8>, _ offMaxx: Int) {
-        let abcd = unsignedMulHi(dw, M_U64_DIV_1E4) >> S_U64_DIV_1E4
+        let abcd = mulhi64(dw, M_U64_DIV_1E4) >> S_U64_DIV_1E4
         let efgh = dw &- (abcd &* 10000)
 
         let ab = (abcd &* M_U32_DIV_1E2) >> S_U32_DIV_1E2
@@ -983,7 +990,7 @@ public enum Decimal128TextCodec {
         var ib = offMaxx
         let zero = UInt8(ascii_0)
         while remainingDigitCount >= 4 {
-            let t0 = unsignedMulHi(t, M_U64_DIV_1E4) >> S_U64_DIV_1E4
+            let t0 = mulhi64(t, M_U64_DIV_1E4) >> S_U64_DIV_1E4
             let abcd = t &- (t0 &* 10000)
             t = t0
             let ab = (abcd &* M_U32_DIV_1E2) >> S_U32_DIV_1E2
@@ -1652,7 +1659,7 @@ public enum Decimal128TextCodec {
         // A 128x128 product truncated to 128 bits: each partial product below
         // wraps by construction, and the discarded halves are known zero because
         // the caller checked the result fits in 34 digits.
-        let pp00Hi = unsignedMulHi(dw0, y0)
+        let pp00Hi = mulhi64(dw0, y0)
         let pp00Lo = dw0 &* y0
         let pp10Lo = dw1 &* y0
         let pp01Lo = dw0 &* y1
@@ -1867,7 +1874,7 @@ public enum Decimal128TextCodec {
         var shift: UInt64 = 0
         while (rest != 0) {
             // reciprocal-multiply divide by 1000
-            let q = unsignedMulHi(rest, 0x020C_49BA_5E35_3F7D) >> 3
+            let q = mulhi64(rest, 0x020C_49BA_5E35_3F7D) >> 3
             declets |= dpdEncodeDeclet(rest &- (q &* 1000)) << shift
             shift &+= 10
             rest = q
@@ -2078,7 +2085,7 @@ public enum Decimal128TextCodec {
     /// Where no unsigned 64-bit multiply-high exists this decomposes into four
     /// 32x32 partial products; Swift has one on the type.
     @inline(__always)
-    private static func unsignedMulHi(_ x: UInt64, _ y: UInt64) -> UInt64 {
+    private static func mulhi64(_ x: UInt64, _ y: UInt64) -> UInt64 {
         return x.multipliedFullWidth(by: y).high
     }
 
@@ -2088,7 +2095,7 @@ public enum Decimal128TextCodec {
         let y = POW10[pow10 << 1]
         // the low word of a genuine 128-bit product, so both wrap by design
         let prodLo = x &* y
-        let prodHi = unsignedMulHi(x, y)
+        let prodHi = mulhi64(x, y)
         let sumLo = prodLo &+ a
         let sumHi = prodHi &+ (sumLo < prodLo ? 1 : 0)
         return (sumHi, sumLo)

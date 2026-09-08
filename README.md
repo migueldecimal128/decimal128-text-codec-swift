@@ -183,7 +183,7 @@ occurs in the source:
   entry and the join once on exit — which is what keeps the two files readable
   side by side.
 - **Dwords are `UInt64`, not signed `Long`.** The reference carries
-  `unsignedMulHi` / `unsignedLT` / `ushr` only because the JVM has no unsigned
+  `unsignedLT` / `unsignedCmp` / `ushr` only because the JVM has no unsigned
   64-bit type.
 - **Swift arithmetic traps where Kotlin's wraps.** Every site the reference
   relies on wrapping is spelled `&+` / `&*` here and carries a note saying why
