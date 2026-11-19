@@ -101,7 +101,7 @@ public enum Decimal128TextCodec {
     /// Unconditional abort marking unreachable code.
     private static func impossible(_ message: String,
                                    file: StaticString = #fileID, line: UInt = #line) -> Never {
-        fatalError("decimal128-text-codec: impossible state: \(message)", file: file, line: line)
+        fatalError("decimal128-text-codec: impossible state: " + message, file: file, line: line)
     }
 
     @inline(__always)
@@ -789,7 +789,7 @@ public enum Decimal128TextCodec {
         var dw1T = dw1
         var dw0T = dw0
         var digitsRemaining = truncationNeeded
-        repeat {
+        while (digitsRemaining > 0) {
             let stepPow10 = min(digitsRemaining, 9)
             let step = u113DivModPow10Max9(dw1T, dw0T, stepPow10)
             dw1T = step.qHi
@@ -797,7 +797,7 @@ public enum Decimal128TextCodec {
             let stepResidue = residueFromValuePow10(0, step.rem, stepPow10)
             scaleResidue = residueMerge(stepResidue, scaleResidue)
             digitsRemaining &-= stepPow10
-        } while (digitsRemaining > 0)
+        }
         return (dw1T, dw0T, scaleResidue)
     }
 
@@ -1134,8 +1134,10 @@ public enum Decimal128TextCodec {
         let signLen = sign ? 1 : 0
         let totalLen = signLen &+ INFINITY_TEXT.count
         ascii[0] = UInt8(ascii_minus) // overwritten by the 'I' when unsigned
-        for i in 0..<INFINITY_TEXT.count {
+        var i = 0
+        while (i < INFINITY_TEXT.count) {
             ascii[signLen &+ i] = INFINITY_TEXT[i]
+            i &+= 1
         }
         return totalLen
     }
@@ -1149,8 +1151,10 @@ public enum Decimal128TextCodec {
         let baseLen = wordOff &+ NAN_TEXT.count
         ascii[0] = UInt8(ascii_minus)   // overwritten by the 's' or the 'N' when unsigned
         ascii[signLen] = UInt8(ascii_s) // overwritten by the 'N' when quiet
-        for i in 0..<NAN_TEXT.count {
+        var i = 0
+        while (i < NAN_TEXT.count) {
             ascii[wordOff &+ i] = NAN_TEXT[i]
+            i &+= 1
         }
         if (payloadHi | payloadLo) == 0 ||
             // non canonical IEEE 754-2019 3.5.2 c) 2)
@@ -1171,8 +1175,10 @@ public enum Decimal128TextCodec {
             let k = -qExp
             let zeroLen = (k == 0) ? 1 : k &+ 2
             ascii[0] = UInt8(ascii_minus) // overwritten by the '0' when unsigned
-            for i in 0..<zeroLen {
+            var i = 0
+            while (i < zeroLen) {
                 ascii[signLen &+ i] = PLAIN_ZERO[i]
+                i &+= 1
             }
             return signLen &+ zeroLen
         }
@@ -1186,8 +1192,10 @@ public enum Decimal128TextCodec {
         let plusLen = (qExp > 0) ? 1 : 0
         let baseLen = signLen &+ ZERO_EXP_TEXT.count &+ plusLen
         ascii[0] = UInt8(ascii_minus) // overwritten by the '0' when unsigned
-        for i in 0..<ZERO_EXP_TEXT.count {
+        var i = 0
+        while (i < ZERO_EXP_TEXT.count) {
             ascii[signLen &+ i] = ZERO_EXP_TEXT[i]
+            i &+= 1
         }
         ascii[signLen &+ ZERO_EXP_TEXT.count] = UInt8(ascii_plus) // overwritten by the '-' when qExp < 0
         return baseLen &+ appendInt(ascii, baseLen, qExp)
@@ -1222,16 +1230,16 @@ public enum Decimal128TextCodec {
         let decimalPointLen = 1
         let totalLen = signLen &+ leadingZeroCount &+ decimalPointLen &+ digitLen
         ascii[0] = UInt8(ascii_minus)
-        if signLen <= leadingZeroCount {
-            for i in signLen...leadingZeroCount { // there is one extra here
-                ascii[i] = UInt8(ascii_0)
-            }
+        var i = signLen
+        while (i <= leadingZeroCount) { // there is one extra here
+            ascii[i] = UInt8(ascii_0)
+            i &+= 1
         }
         u128ToAscii(digitLen, dw1, dw0, ascii, signLen &+ leadingZeroCount)
-        var i = totalLen &- 1
-        while i >= totalLen &- digitsRightOfDecimal {
-            ascii[i] = ascii[i &- 1]
-            i &-= 1
+        var j = totalLen &- 1
+        while (j >= totalLen &- digitsRightOfDecimal) {
+            ascii[j] = ascii[j &- 1]
+            j &-= 1
         }
         ascii[totalLen &- digitsRightOfDecimal &- 1] = UInt8(ascii_dot)
         return totalLen
@@ -2024,7 +2032,8 @@ public enum Decimal128TextCodec {
         var ch = chFirst
         var chPrevCode: Int = 0
         let target = Array("infinity".utf8)
-        for i in 0..<8 {
+        var i = 0
+        while (i < 8) {
             let targetCode = Int(target[i])
             if ((ch | 0x20) != targetCode) {
                 if (ch == -1) {
@@ -2036,6 +2045,7 @@ public enum Decimal128TextCodec {
             chPrevCode = ch | 0x20
             ch = codeAt(str, pos)
             pos &+= 1
+            i &+= 1
         }
         if (ch != -1 || (chPrevCode != ascii_f && chPrevCode != ascii_y)) {
             return "FAILURE_PARSING_INFINITY"
