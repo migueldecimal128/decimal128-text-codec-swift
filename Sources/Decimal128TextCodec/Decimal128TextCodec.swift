@@ -106,7 +106,7 @@ public enum Decimal128TextCodec {
 
     @inline(__always)
     private static func demand(_ condition: @autoclosure () -> Bool,
-                               _ message: @autoclosure () -> String = "invariant",
+                               _ message: @autoclosure () -> String,
                                file: StaticString = #fileID, line: UInt = #line) {
         if !condition() {
             impossible(message(), file: file, line: line)
@@ -344,7 +344,7 @@ public enum Decimal128TextCodec {
     ///   - str: the character sequence to parse.
     /// - Returns: `nil` on success, or a human-readable message on failure.
     public static func bid128Parse(_ out: inout UInt128, _ str: String) -> String? {
-        parseInto(&out, formatIsBid: true, str)
+        return parseInto(&out, formatIsBid: true, str)
     }
 
     /// Parse a decimal character sequence into a DPD128 encoding.
@@ -396,7 +396,7 @@ public enum Decimal128TextCodec {
     ///   - str: the character sequence to parse.
     /// - Returns: `nil` on success, or a human-readable message on failure.
     public static func dpd128Parse(_ out: inout UInt128, _ str: String) -> String? {
-        parseInto(&out, formatIsBid: false, str)
+        return parseInto(&out, formatIsBid: false, str)
     }
 
     /// The encoding is written on both paths -- the encoding on success, the canonical positive
@@ -634,13 +634,13 @@ public enum Decimal128TextCodec {
     private typealias Words = (hi: UInt64, lo: UInt64)
 
     @inline(__always)
-    private static func hiWord(_ v: UInt128) -> UInt64 { UInt64(truncatingIfNeeded: v >> 64) }
+    private static func hiWord(_ v: UInt128) -> UInt64 { return UInt64(truncatingIfNeeded: v >> 64) }
 
     @inline(__always)
-    private static func loWord(_ v: UInt128) -> UInt64 { UInt64(truncatingIfNeeded: v) }
+    private static func loWord(_ v: UInt128) -> UInt64 { return UInt64(truncatingIfNeeded: v) }
 
     @inline(__always)
-    private static func joinWords(_ w: Words) -> UInt128 { (UInt128(w.hi) << 64) | UInt128(w.lo) }
+    private static func joinWords(_ w: Words) -> UInt128 { return (UInt128(w.hi) << 64) | UInt128(w.lo) }
 
     // ------------------------------------------------------------------
     // MARK: - Low-level unsigned arithmetic
@@ -1823,12 +1823,12 @@ public enum Decimal128TextCodec {
         // UTF-8 buffer over the input with withUTF8 and this reads that. Every byte a numeral
         // can contain is ASCII, so a multi-byte sequence arrives as bytes >= 0x80 and is
         // rejected as an unrecognized character.
-        (index >= 0 && index < str.count) ? Int(str[index]) : -1
+        return (index >= 0 && index < str.count) ? Int(str[index]) : -1
     }
 
     /// The digit test, spelled out once: `true` for '0' through '9' and nothing else.
     @inline(__always)
-    private static func isDigit(_ ch: Int) -> Bool { (ch >= ascii_0 && ch <= ascii_9) }
+    private static func isDigit(_ ch: Int) -> Bool { return (ch >= ascii_0 && ch <= ascii_9) }
 
     /// Parse a finite decimal numeral and produce the corresponding encoding. Accepts an
     /// optional decimal point, an optional E/e exponent (with optional +/- sign), and any
