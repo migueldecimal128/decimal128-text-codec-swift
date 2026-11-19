@@ -115,11 +115,10 @@ public enum Decimal128TextCodec {
 
     @inline(__always)
     private static func verify(_ condition: @autoclosure () -> Bool,
-                               _ message: @autoclosure () -> String = "invariant",
                                file: StaticString = #fileID, line: UInt = #line) {
         #if VERIFY_ENABLED
         if !condition() {
-            impossible(message(), file: file, line: line)
+            impossible("verify failed", file: file, line: line)
         }
         #endif
     }
