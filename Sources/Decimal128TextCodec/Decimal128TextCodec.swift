@@ -395,11 +395,10 @@ public enum Decimal128TextCodec {
         parseInto(&out, formatIsBid: false, str)
     }
 
-    /// `out` is written on both paths -- the encoding on success, the canonical
-    /// positive quiet NaN on failure -- so the caller never reads back what was
-    /// there before the call. That is why a failure is reported beside the value
-    /// rather than in place of it: a caller who discards the message still holds
-    /// a legal IEEE 754-2019 datum.
+    /// The encoding is written on both paths -- the encoding on success, the canonical positive
+    /// quiet NaN on failure -- so the caller never reads back what was there before the call.
+    /// That is why a failure is reported beside the value rather than in place of it: a caller
+    /// who discards the message still holds a legal IEEE 754-2019 datum.
     private static func parseInto(_ out: inout UInt128, formatIsBid: Bool,
                                   _ str: String) -> String? {
         var words: Words = (0, 0)
@@ -643,17 +642,16 @@ public enum Decimal128TextCodec {
     // MARK: - Low-level unsigned arithmetic
     // ------------------------------------------------------------------
 
-    /// High 64 bits of the 128-bit product `x * y`.
-    ///
-    /// Where no unsigned 64-bit multiply-high exists this decomposes into four
-    /// 32x32 partial products; Swift has one on the type.
+    /// Compute the high 64 bits of the 128-bit unsigned product `x * y`.
     @inline(__always)
     private static func mulhi64(_ x: UInt64, _ y: UInt64) -> UInt64 {
+        // Where no unsigned 64-bit multiply-high exists this decomposes into four 32x32 partial
+        // products; Swift has one on the type.
         return x.multipliedFullWidth(by: y).high
     }
 
-    /// Bit length of a 128-bit value: the position of the highest set bit plus
-    /// one, and 0 for the zero value.
+    /// Compute the bit-length of a 128-bit unsigned value: the position of the highest set bit,
+    /// plus one. Returns 0 for the zero value.
     @inline(__always)
     private static func calcBitLen128(_ dw1: UInt64, _ dw0: UInt64) -> Int {
         if (dw1 != 0) {
@@ -665,11 +663,11 @@ public enum Decimal128TextCodec {
         return 0
     }
 
-    /// Decimal digit count of a 128-bit value.
-    ///
-    /// `(bitLen * 1233) >> 12` is `floor(bitLen * log10(2))`, which is either the
-    /// exact digit count or one too small; a single unsigned compare against the
-    /// next-larger power of ten resolves the off-by-one.
+    /// Compute the decimal digit count of a 128-bit unsigned value. Uses the standard
+    /// log10/log2 approximation: for any non-zero `bitLen`, `(bitLen * 1233) >> 12` is
+    /// `floor(bitLen * log10(2))`, which is either the exact digit count or one too small. A
+    /// single unsigned 128-bit compare against the next-larger power of 10 in `POW10` resolves
+    /// the off-by-one.
     @inline(__always)
     private static func calcDigitLen128(_ dw1: UInt64, _ dw0: UInt64) -> Int {
         let bitLen = calcBitLen128(dw1, dw0)
@@ -684,7 +682,8 @@ public enum Decimal128TextCodec {
         return (dw0 < p0) ? hiDigitCount &- 1 : hiDigitCount
     }
 
-    /// Multiply a 64-bit value by `10^pow10` and add `a`, as a 128-bit result.
+    /// Multiply a 64-bit unsigned value `x` by `10^pow10` and add a 64-bit integer `a`,
+    /// producing the 128-bit result.
     @inline(__always)
     private static func u128FmaPow10(_ x: UInt64, _ pow10: Int, _ a: UInt64) -> Words {
         let y = POW10[pow10 << 1]
@@ -700,12 +699,10 @@ public enum Decimal128TextCodec {
     // MARK: - The divide kernel
     // ------------------------------------------------------------------
 
-    /// Divide a 113-bit value by `10^pow10` for `pow10` in `1...9`, returning
-    /// the quotient and the remainder.
-    ///
-    /// Table-free: `10^pow10` factors as `2^pow10 * 5^pow10`, so the low
-    /// `pow10` bits fall straight out as the low part of the remainder and the
-    /// shifted value is divided by `5^pow10` with two hardware 64-bit divides.
+    /// Divide a 113-bit unsigned coefficient by `10^pow10` for `pow10` in 1..9, producing the
+    /// quotient and the remainder. Factors `10^pow10` as `2^pow10 * 5^pow10`: the low `pow10`
+    /// bits are extracted directly as the low part of the remainder, then the shifted value is
+    /// divided by `5^pow10` using two hardware 64-bit divides.
     private static func u113DivModPow10Max9(_ dwHi: UInt64, _ dwLo: UInt64,
                                              _ pow10: Int) -> (qHi: UInt64, qLo: UInt64, rem: UInt64) {
         verify(pow10 >= 1 && pow10 <= 9)
@@ -738,27 +735,28 @@ public enum Decimal128TextCodec {
     // MARK: - Residue -- how much was discarded, relative to half a ulp
     // ------------------------------------------------------------------
 
-    /// Classify a single discarded decimal digit 0..9.
+    /// Classify a single discarded decimal digit (0..9) as `EXACT`, `LT_HALF`, `HALF`, or
+    /// `GT_HALF` via lookup in `DIGIT_MAP`.
     @inline(__always)
     private static func residueFromDecimalDigit(_ digit: Int) -> Int {
         return (DIGIT_MAP >> (digit << 1)) & 0x03
     }
 
-    /// Combine a primary `roundResidue` with a `stickyResidue` from
-    /// less-significant digits, in the round-bit-and-sticky-bit style. The
-    /// sticky residue collapses to a single nonzero bit which is OR'd into the
-    /// low bit of the round residue.
+    /// Combine a primary `roundResidue` with a `stickyResidue` from less-significant digits, in
+    /// the round-bit-and-sticky-bit style. The sticky residue is collapsed to a single
+    /// "nonzero" bit and OR'd into the low bit of the round residue.
     @inline(__always)
     private static func residueMerge(_ roundResidue: Int, _ stickyResidue: Int) -> Int {
         let s = (stickyResidue & 1) | (stickyResidue >> 1)
         return (roundResidue | s) & 0x03
     }
 
-    /// Classify a 128-bit value relative to half of `10^pow10`.
-    ///
-    /// Used in the underflow boundary case, where the entire coefficient is
-    /// discarded by truncation, so the residue is decided by where it falls
-    /// relative to half the truncation divisor.
+    /// Classify a 128-bit unsigned value relative to half of `10^pow10`, returning one of
+    /// `EXACT`, `LT_HALF`, `HALF`, or `GT_HALF`. Used in the underflow boundary case where the
+    /// entire coefficient is being discarded by truncation: the residue is determined by where
+    /// the coefficient falls relative to half-of-the-truncation-divisor. Looks up `10^pow10` in
+    /// the `POW10` table, halves it via a 128-bit shift right by 1, and compares against the
+    /// input as an unsigned 128-bit value.
     private static func residueFromValuePow10(_ dw1: UInt64, _ dw0: UInt64, _ pow10: Int) -> Int {
         if ((dw1 | dw0) == 0) {
             return EXACT
@@ -778,9 +776,9 @@ public enum Decimal128TextCodec {
         return HALF
     }
 
-    /// Divide a 128-bit coefficient by `10^truncationNeeded`, returning the
-    /// quotient and the round-and-sticky residue class of what was discarded.
-    /// Truncates in chunks of up to 9 digits via ``u113DivModPow10Max9``.
+    /// Divide a 128-bit unsigned coefficient by `10^truncationNeeded`, producing the quotient
+    /// and the round-and-sticky residue class of what was discarded. Truncates in chunks of up
+    /// to 9 digits via `u113DivModPow10Max9`.
     private static func u128ScaleDownPow10(_ dw1: UInt64, _ dw0: UInt64,
                                            _ truncationNeeded: Int) -> (hi: UInt64, lo: UInt64, residue: Int) {
         verify((dw1 | dw0) != 0)
@@ -813,10 +811,8 @@ public enum Decimal128TextCodec {
     // choice.
     // ==================================================================
 
-    /// Decode a 10-bit DPD declet into `0...999`.
-    ///
-    /// Mapping: bit9..bit0 as `p q r s t u v w x y`. Accepts the 24
-    /// non-canonical declets as well as the 1000 canonical ones, per
+    /// Decode a 10-bit DPD declet (bits 9..0) into 0..999. Mapping: bit9..bit0 as p q r s t u v
+    /// w x y. Accepts the 24 non-canonical declets as well as the 1000 canonical ones, per
     /// Cowlishaw's dpd2bcd.
     private static func dpdDecodeDeclet(_ declet: UInt64) -> UInt64 {
         verify(declet <= 1023)
@@ -868,11 +864,10 @@ public enum Decimal128TextCodec {
         return d2 &* 100 &+ d1 &* 10 &+ d0
     }
 
-    /// Encode `0...999` into a 10-bit DPD declet, per Cowlishaw's bcd2dpd.
-    ///
-    /// The inverse of ``dpdDecodeDeclet`` over canonical declets. A
-    /// non-canonical declet decodes to a value that re-encodes to the canonical
-    /// declet for that value, so `encode(decode(x)) == x` only for canonical `x`.
+    /// Encode 0..999 into a 10-bit DPD declet, per Cowlishaw's bcd2dpd. The inverse of
+    /// `dpdDecodeDeclet` over canonical declets. Non-canonical declets decode to a value that
+    /// re-encodes to the canonical declet for that value, so `encode(decode(x)) == x` only for
+    /// canonical x.
     private static func dpdEncodeDeclet(_ n: UInt64) -> UInt64 {
         verify(n <= 999)
 
@@ -924,11 +919,9 @@ public enum Decimal128TextCodec {
                (x << 1) | y
     }
 
-    /// Decode up to seven packed DPD declets into a binary integer.
-    ///
-    /// Declets are ten bits each, least significant first. The topmost may be
-    /// narrower than ten bits, which is how the coefficient's leading digit is
-    /// carried: 0..9 encodes to itself as a declet.
+    /// Decode up to seven packed DPD declets into a binary integer. Declets are ten bits each,
+    /// least significant first. The topmost may be narrower than ten bits, which is how the
+    /// coefficient's leading digit is carried: 0..9 encodes to itself as a declet.
     private static func binFromDeclets(_ declets: UInt64) -> UInt64 {
         var bin: UInt64 = 0
         var rest = declets
@@ -943,9 +936,8 @@ public enum Decimal128TextCodec {
         return bin
     }
 
-    /// Encode a binary integer of at most 18 digits into six packed declets,
-    /// least significant first. The inverse of ``binFromDeclets`` over that
-    /// range.
+    /// Encode a binary integer of at most 18 digits into six packed declets, least significant
+    /// first. The inverse of `binFromDeclets` over that range.
     private static func decletsFromBin(_ bin: UInt64) -> UInt64 {
         verify(bin < TEN_POW_18)
         var rest = bin
@@ -965,13 +957,12 @@ public enum Decimal128TextCodec {
     // MARK: - Rendering integers into ASCII
     // ------------------------------------------------------------------
 
-    /// Render exactly 8 decimal digits of `dw` into `ascii`, ending at
-    /// `offMaxx`. The caller must ensure `dw < 10^8`; fewer significant digits
-    /// are padded with leading zeros.
-    ///
-    /// A binary cascade: `÷ 10^4` once to split into two 4-digit halves, then
-    /// `÷ 10^2` twice to split each half into 2-digit pairs, then `÷ 10` four
-    /// times for the individual digits.
+    /// Render exactly 8 decimal digits of `dw` into `ascii`, ending at `offMaxx`. Caller must
+    /// ensure `dw < 10^8`; the function pads with leading zeros if `dw` has fewer than 8
+    /// significant digits. Implemented as a binary cascade: / 10^4 once to split into two
+    /// 4-digit halves, then / 10^2 twice to split each half into two 2-digit pairs, then / 10
+    /// four times to extract individual digits. Always writes exactly 8 bytes at offsets
+    /// `offMaxx - 8` through `offMaxx - 1`.
     private static func render8DigitsBeforeIndex(_ dw: UInt64, _ ascii: UnsafeMutableBufferPointer<UInt8>, _ offMaxx: Int) {
         let abcd = mulhi64(dw, M_U64_DIV_1E4) >> S_U64_DIV_1E4
         let efgh = dw &- (abcd &* 10000)
@@ -1005,18 +996,21 @@ public enum Decimal128TextCodec {
         ascii[offMaxx &- 1] = zero &+ UInt8(truncatingIfNeeded: h)
     }
 
-    /// Render exactly `renderDigitCount` decimal digits of `dw` into `ascii`,
-    /// ending at `offMaxx`. Fewer significant digits are padded with leading
-    /// zeros.
+    /// Render exactly `renderDigitCount` decimal digits of `dw` into `ascii`, ending at
+    /// `offMaxx`. Pads with leading zeros if `dw` has fewer significant digits than
+    /// `renderDigitCount`. Two phases:
     ///
-    /// Two phases: peel 4 digits per iteration while at least 4 remain, then one
-    /// digit at a time for the remaining 0–3.
+    /// - While at least 4 digits remain: peel 4 digits per iteration via / 10^4 followed by a
+    ///   2-digit / 1-digit cascade.
+    /// - For the remaining 0..3 digits: peel one digit at a time via / 10 through reciprocal
+    ///   multiplication.
     ///
-    /// Kept `private` here. It is public in the legacy base this family
-    /// descends from, which was an accidental leak — nothing outside the codec
-    /// ever called it.
+    /// Always writes exactly `renderDigitCount` bytes at offsets `offMaxx - renderDigitCount`
+    /// through `offMaxx - 1`.
     private static func renderTailDigitsBeforeIndex(_ renderDigitCount: Int, _ dw: UInt64,
                                                     _ ascii: UnsafeMutableBufferPointer<UInt8>, _ offMaxx: Int) {
+        // Kept private here. It is public in the legacy base this family descends from, which
+        // was an accidental leak -- nothing outside the codec ever called it.
         var t = dw
         var remainingDigitCount = renderDigitCount
         var ib = offMaxx
@@ -1049,23 +1043,22 @@ public enum Decimal128TextCodec {
         verify(offMaxx &- ib == renderDigitCount)
     }
 
-    /// Render a 128-bit unsigned integer as `digitPrintCount` decimal digits
-    /// into `ascii`, ending at offset `off + digitPrintCount`.
+    /// Render a 128-bit unsigned integer as `digitPrintCount` decimal digits into `ascii`,
+    /// ending at offset `off + digitPrintCount`. Three phases:
     ///
-    /// Three phases:
+    /// - While `dw1T != 0`: peel 8 digits per outer iteration via three / 10^8 divisions on
+    ///   rotating 96-bit chunks, using `mulhi64` for the high half of each multi-word divide.
+    /// - Once the value fits in 64 bits: peel 8 digits at a time via a single / 10^8 per
+    ///   iteration.
+    /// - For 1..7 leftover digits: delegate to `renderTailDigitsBeforeIndex`.
     ///
-    ///  1. While `dw1T != 0`: peel 8 digits per outer iteration via three
-    ///     `÷ 10^8` divisions on rotating 96-bit chunks, using ``mulhi64``
-    ///     for the high half of each multi-word divide.
-    ///  2. Once the value fits in 64 bits: peel 8 digits at a time via a single
-    ///     `÷ 10^8` per iteration.
-    ///  3. For 1–7 leftover digits: delegate to ``renderTailDigitsBeforeIndex``.
-    ///
-    /// The caller must have allocated at least `off + digitPrintCount` bytes and
-    /// is responsible for any leading-zero padding outside the rendered range.
+    /// Each 8-digit chunk is rendered by `render8DigitsBeforeIndex`. The caller must have
+    /// allocated a buffer with at least `off + digitPrintCount` bytes, and is responsible for
+    /// any leading-zero padding outside the rendered range.
     @discardableResult
     private static func u128ToAscii(_ digitPrintCount: Int, _ dw1: UInt64, _ dw0: UInt64,
                                     _ ascii: UnsafeMutableBufferPointer<UInt8>, _ off: Int) -> Int {
+        // Returns digitPrintCount, unchanged from the input.
         var dw1T = dw1
         var dw0T = dw0
         var ich = off &+ digitPrintCount
@@ -1101,8 +1094,8 @@ public enum Decimal128TextCodec {
         return digitPrintCount
     }
 
-    /// Write a signed decimal exponent at `off`, returning its length. The
-    /// magnitude never exceeds 6176, so it is at most four digits.
+    /// Write a signed decimal exponent at `off`, returning its length. The magnitude never
+    /// exceeds 6176, so it is at most four digits.
     private static func appendInt(_ out: UnsafeMutableBufferPointer<UInt8>,
                                        _ off: Int, _ v: Int) -> Int {
         var signLen = 0
@@ -1201,8 +1194,8 @@ public enum Decimal128TextCodec {
         return baseLen &+ appendInt(out, baseLen, qExp)
     }
 
-    /// Format a finite non-zero value with `qExp == 0` as a plain integer
-    /// sequence: no radix point, no exponent.
+    /// Format a finite non-zero value with qExp == 0 as a plain integer sequence: no radix
+    /// point, no exponent.
     private static func fnzToIntegerAscii(_ out: UnsafeMutableBufferPointer<UInt8>, _ sign: Bool,
                                           _ digitLen: Int, _ dw1: UInt64, _ dw0: UInt64) -> Int {
         verify(digitLen > 0)
@@ -1215,12 +1208,10 @@ public enum Decimal128TextCodec {
         return totalLen
     }
 
-    /// Format a finite non-zero value in fixed-point notation, with an explicit
-    /// radix point and the appropriate number of leading zeros — `"0.00012345"`.
-    ///
-    /// Renders the coefficient digits, then shifts the trailing digits right by
-    /// one position to open a slot for the radix point. Leading zeros are
-    /// written directly into the buffer before the digits.
+    /// Format a finite non-zero value in fixed-point notation, with an explicit radix point and
+    /// the appropriate number of leading zeros -- "0.00012345". Renders the coefficient digits,
+    /// then shifts the trailing digits right by one position to open a slot for the radix
+    /// point. Leading zeros are written directly into the buffer before the digits.
     private static func fnzToDecimalPointAscii(_ out: UnsafeMutableBufferPointer<UInt8>, _ sign: Bool,
                                                _ qExp: Int, _ digitLen: Int,
                                                _ dw1: UInt64, _ dw0: UInt64) -> Int {
@@ -1245,14 +1236,11 @@ public enum Decimal128TextCodec {
         return totalLen
     }
 
-    /// Format a finite non-zero value in normalized scientific notation —
-    /// `"1.234E+5"`, `"-9.99E-200"`.
-    ///
-    /// Renders the coefficient digits, inserts a radix point after the leading
-    /// digit when there is more than one, then appends `E`, the exponent sign
-    /// and the absolute exponent. The sign is always written: `+` for
-    /// non-negative exponents, `-` for negative, per the GDAS
-    /// `to-scientific-string` form.
+    /// Format a finite non-zero value in normalized scientific notation -- "1.234E+5",
+    /// "-9.99E-200". Renders the coefficient digits, inserts a radix point after the leading
+    /// digit when there is more than one, then appends E, the exponent sign and the absolute
+    /// exponent. The sign is always written: + for non-negative exponents, - for negative, per
+    /// the GDAS to-scientific-string form.
     private static func fnzToNormalizedScientificAscii(_ out: UnsafeMutableBufferPointer<UInt8>, _ sign: Bool,
                                                        _ qExp: Int, _ digitLen: Int,
                                                        _ dw1: UInt64, _ dw0: UInt64) -> Int {
@@ -1290,9 +1278,9 @@ public enum Decimal128TextCodec {
         return totalLen
     }
 
-    /// Finite non-zero: pick the form. Integer when the quantum exponent is
-    /// zero, fixed-point when it is negative and the adjusted exponent is at
-    /// least `-6`, scientific otherwise — the GDAS auto-select rule.
+    /// Finite non-zero: pick the form. Integer when the quantum exponent is zero, fixed-point
+    /// when it is negative and the adjusted exponent is at least -6, scientific otherwise --
+    /// the GDAS auto-select rule.
     private static func fnzAscii(_ out: UnsafeMutableBufferPointer<UInt8>, _ sign: Bool,
                                  _ qExp: Int, _ dw1: UInt64, _ dw0: UInt64) -> Int {
         let digitLen = calcDigitLen128(dw1, dw0)
@@ -1333,15 +1321,14 @@ public enum Decimal128TextCodec {
     // not wanted. The one exception is a TRAILING `+` in the exponent-form
     // zero, noted where it happens.
     // ----------------------------------------------------------------------
-    /// Render a BID128 encoding into the caller's buffer.
-    ///
-    /// Field extraction follows IEEE 754-2019 §3.5.2; the class it lands on --
-    /// Infinity, NaN (quiet or signaling, with optional payload), zero
-    /// (canonical or non-canonical), or finite non-zero -- picks the leaf
-    /// renderer. ``bid128ToString(_:)`` and ``bid128ToAscii(_:_:)`` both wrap
-    /// what this writes.
+
+    /// Render a BID128 encoding into the caller's buffer. Field extraction follows IEEE
+    /// 754-2019 section 3.5.2; the class it lands on -- Infinity, NaN (quiet or signaling, with
+    /// optional payload), zero (canonical or non-canonical), or finite non-zero -- picks the
+    /// leaf renderer.
     private static func decodeBid128toAscii(_ out: UnsafeMutableBufferPointer<UInt8>,
                                             _ bid128Hi: UInt64, _ bid128Lo: UInt64) -> Int {
+        // bid128ToString and bid128ToAscii both wrap what this writes.
         // IEEE754-2019 Table 3.6 -- Decimal interchange format parameters, p 23
         let k = 128       // storage width in bits
         let t = T_WIDTH   // trailing significand field width in bits
@@ -1408,10 +1395,8 @@ public enum Decimal128TextCodec {
         return fnzAscii(out, sign, qExp, dw1, dw0)
     }
 
-    /// Render a DPD128 encoding into the caller's buffer.
-    ///
-    /// The peer of ``decodeBid128toAscii(_:_:_:)``: both reduce an encoding to
-    /// `(sign, qExp, coefficient)` and then dispatch to the same leaf
+    /// Render a DPD128 encoding into the caller's buffer. The peer of `decodeBid128toAscii`:
+    /// both reduce an encoding to (sign, qExp, coefficient) and then dispatch to the same leaf
     /// renderers, which have never seen an interchange format.
     private static func decodeDpd128toAscii(_ out: UnsafeMutableBufferPointer<UInt8>,
                                             _ dpd128Hi: UInt64, _ dpd128Lo: UInt64) -> Int {
@@ -1484,12 +1469,11 @@ public enum Decimal128TextCodec {
     // MARK: - Packing a finalized value into an encoding
     // ------------------------------------------------------------------
 
-    /// Pack the sign, biased quantum exponent and 113-bit coefficient into the
-    /// BID128 encoding.
-    ///
-    /// Always the short-form encoding -- combination-field top bits not `11` --
-    /// which is correct for any canonical coefficient, since its top 3 bits
-    /// necessarily fit in 0..7.
+    /// Pack the sign, biased quantum exponent, and 113-bit coefficient into the BID128
+    /// encoding. Always uses the short-form encoding (combination field top bits not 11), which
+    /// is correct for any canonical coefficient whose top 3 bits fit in 0..7. Preconditions:
+    /// the exponent must be in [-6176, 6111] and the coefficient must have at most 34 decimal
+    /// digits.
     private static func bid128SetFinite(_ sign: Bool, _ qExp: Int,
                                         _ dw1: UInt64, _ dw0: UInt64) -> Words {
         verify(qExp >= Q_MIN && qExp <= Q_MAX)
@@ -1500,14 +1484,12 @@ public enum Decimal128TextCodec {
         return (s | g | dw1, dw0)
     }
 
-    /// Pack a finite value into DPD128. The peer of ``bid128SetFinite``: same
-    /// inputs, same sign bit, same 14-bit biased exponent, and a coefficient of
-    /// the same 34 digits -- laid out as a leading digit carried in the
-    /// combination field plus eleven declets.
-    ///
-    /// The leading digit cannot be packed independently of the exponent: DPD
-    /// puts it in the same five-bit prefix as the exponent's top two bits, so
-    /// unlike BID there is no shared "pack sign and exponent" step to factor out.
+    /// Pack a finite value into DPD128. The peer of `bid128SetFinite`: same inputs, same sign
+    /// bit, same 14-bit biased exponent, and a coefficient of the same 34 digits -- laid out as
+    /// a leading digit carried in the combination field plus eleven declets. The leading digit
+    /// cannot be packed independently of the exponent: DPD puts it in the same five-bit prefix
+    /// as the exponent's top two bits, so unlike BID there is no shared "pack sign and
+    /// exponent" step to factor out.
     private static func dpd128SetFinite(_ sign: Bool, _ qExp: Int,
                                          _ dw1: UInt64, _ dw0: UInt64) -> Words {
         verify(qExp >= Q_MIN && qExp <= Q_MAX)
@@ -1540,11 +1522,11 @@ public enum Decimal128TextCodec {
                 (declets5Hi << 60) | declets6Lo)
     }
 
-    /// Pack a finite value into whichever interchange format the caller asked
-    /// for. BID and DPD are peers: both carry the same sign, the same 14-bit
-    /// biased exponent and the same 34-digit coefficient, and differ only in how
-    /// that coefficient is laid out. Everything upstream of this point --
-    /// rounding, clamping and the underflow region -- is format-neutral.
+    /// Pack a finite value into whichever interchange format the caller asked for. BID and DPD
+    /// are peers: both carry the same sign, the same 14-bit biased exponent and the same
+    /// 34-digit coefficient, and differ only in how that coefficient is laid out. Everything
+    /// upstream of this point -- rounding, clamping and the underflow region -- is
+    /// format-neutral.
     private static func setFinite(_ formatIsBid: Bool, _ sign: Bool, _ qExp: Int,
                                   _ dw1: UInt64, _ dw0: UInt64) -> Words {
         return formatIsBid
@@ -1559,10 +1541,9 @@ public enum Decimal128TextCodec {
         return (withoutPayload | payloadDw1, payloadDw0)
     }
 
-    /// Pack a NaN into DPD128. The payload occupies the whole 110-bit trailing
-    /// field as eleven declets -- 33 digits, with no leading digit in the
-    /// combination field, since G0..G4 are fixed at 11111 and G5 carries the
-    /// signaling flag.
+    /// Pack a NaN into DPD128. The payload occupies the whole 110-bit trailing field as eleven
+    /// declets -- 33 digits, with no leading digit in the combination field, since G0..G4 are
+    /// fixed at 11111 and G5 carries the signaling flag.
     private static func dpd128SetNaN(_ sign: Bool, _ isSignaling: Bool,
                                      _ payloadDw1: UInt64, _ payloadDw0: UInt64) -> Words {
         verify(calcDigitLen128(payloadDw1, payloadDw0) <= 33)
@@ -1580,12 +1561,10 @@ public enum Decimal128TextCodec {
                 (declets5Hi << 60) | declets6Lo)
     }
 
-    /// Pack a NaN into whichever interchange format the caller asked for.
-    ///
-    /// A NaN payload is a coefficient, so the formats diverge here exactly as
-    /// they do for finite values: BID keeps it as a binary integer, DPD as
-    /// declets. Infinity by contrast has no coefficient, which is why it is
-    /// byte-identical in both and needs no such split.
+    /// Pack a NaN into whichever interchange format the caller asked for. A NaN payload is a
+    /// coefficient, so the formats diverge here exactly as they do for finite values: BID keeps
+    /// it as a binary integer, DPD as declets. Infinity by contrast has no coefficient, which
+    /// is why it is byte-identical in both and needs no such split.
     private static func setNaN(_ formatIsBid: Bool, _ sign: Bool, _ isSignaling: Bool,
                                _ payloadDw1: UInt64, _ payloadDw0: UInt64) -> Words {
         return formatIsBid
@@ -1597,17 +1576,16 @@ public enum Decimal128TextCodec {
     // MARK: - Finalize: rounding, clamping, underflow
     // ------------------------------------------------------------------
 
-    /// Encode `Infinity`, or `-Infinity`.
+    /// Encode Infinity (or -Infinity).
     private static func finalizeOverflow(_ sign: Bool) -> Words {
         return ((sign ? SIGN_BIT : 0) | INF_PATTERN_HI, 0)
     }
 
-    /// Test whether a coefficient/exponent pair fits as a canonical encoding:
-    /// exponent in `Q_MIN...Q_MAX` and coefficient in `0..<10^34`.
-    ///
-    /// The fast path uses the high word's leading-zero count to cheaply confirm
-    /// the coefficient has at most 113 bits, in which case it is necessarily
-    /// below 10^34, since 2^113 > 10^34. The slow path compares against 10^34.
+    /// Test whether a coefficient/exponent pair fits as a canonical encoding: exponent in
+    /// [-6176, 6111] and coefficient in [0, 10^34). Fast path uses the leading-zero bit count
+    /// of the high word to cheaply confirm the coefficient has at most 113 bits, in which case
+    /// it is necessarily less than 10^34 (since 2^113 > 10^34). Slow path compares against
+    /// 10^34.
     @inline(__always)
     private static func coeffQExpFit(_ dw1: UInt64, _ dw0: UInt64, _ qExp: Int) -> Bool {
         if (qExp < Q_MIN || qExp > Q_MAX) {
@@ -1621,13 +1599,12 @@ public enum Decimal128TextCodec {
         return (dw1 < maxxHi || (dw1 == maxxHi && dw0 < POW10[pow10Offset]))
     }
 
-    /// Encode a finite value whose natural quantum exponent exceeds `Q_MAX` but
-    /// whose coefficient has enough leading capacity to absorb the excess.
-    ///
-    /// Multiplies the coefficient by `10^qExcess`, reducing the exponent to
-    /// exactly `Q_MAX`. This preserves the value while bringing the encoding
-    /// into representable range. The caller must have verified there is room
-    /// (`digitLen + qExcess <= 34`).
+    /// Encode a finite value whose natural quantum exponent exceeds qMax (6111) but whose
+    /// coefficient has enough leading capacity to absorb the excess. Multiplies the coefficient
+    /// by 10^qExcess (where qExcess is qExp minus 6111), reducing the exponent to exactly 6111.
+    /// This preserves the value while bringing the encoding into representable range. Caller
+    /// must have verified that the coefficient has enough room (digitLen + qExcess <= 34); this
+    /// function asserts the invariant and produces the clamped encoding.
     private static func finalizeClamping(_ formatIsBid: Bool, _ sign: Bool, _ qExp: Int,
                                          _ dw1: UInt64, _ dw0: UInt64) -> Words {
         let qExcess = qExp &- Q_MAX
@@ -1648,15 +1625,12 @@ public enum Decimal128TextCodec {
         return setFinite(formatIsBid, sign, Q_MAX, dw1Scaled, dw0Scaled)
     }
 
-    /// Handle the underflow boundary case, where the most-significant digit of
-    /// the coefficient sits exactly one position right of the representable
-    /// range.
-    ///
-    /// The coefficient value itself decides the rounding: comparing it against
-    /// `(10^digitLen) / 2` yields the residue class. Combined with any incoming
-    /// residue that drives a ties-to-even decision between zero -- always even,
-    /// and the default outcome -- and 1 ulp, the smallest subnormal, reached
-    /// only when the total residue is GT_HALF.
+    /// Handle the underflow boundary case where the most-significant digit of the coefficient
+    /// sits exactly one position to the right of the representable range. The coefficient value
+    /// itself determines rounding: comparing the coefficient against (10^digitLen) / 2 yields
+    /// the residue class. Combined with any incoming residue, this drives a roundTiesToEven
+    /// decision between zero (always even, the default outcome) and 1 ulp (the smallest
+    /// subnormal, only when total residue is `GT_HALF`).
     private static func finalizeUnderflowBoundary(_ formatIsBid: Bool, _ sign: Bool,
                                                   _ dw1: UInt64, _ dw0: UInt64,
                                                   _ residueIn: Int) -> Words {
@@ -1669,6 +1643,8 @@ public enum Decimal128TextCodec {
         return setFinite(formatIsBid, sign, Q_MIN, 0, totalResidue == GT_HALF ? 1 : 0)
     }
 
+    /// Representable as a subnormal: truncate to the minimum exponent, keeping what precision
+    /// survives, and round what is left.
     private static func finalizeSubnormal(_ formatIsBid: Bool, _ sign: Bool, _ qExpIn: Int,
                                           _ dw1In: UInt64, _ dw0In: UInt64,
                                           _ residueIn: Int) -> Words {
@@ -1695,15 +1671,15 @@ public enum Decimal128TextCodec {
         return setFinite(formatIsBid, sign, qExpT, dw1T, dw0T)
     }
 
-    /// Dispatch underflow handling for a value whose exponent is below Emin.
-    /// Three cases:
+    /// Dispatch underflow handling for a value whose exponent is below Emin (-6176). Three
+    /// cases:
     ///
-    ///  - Truncation needed exceeds the digit count: the result is zero, the
-    ///    value being below half the smallest subnormal.
-    ///  - Truncation equals the digit count: a boundary case where the leading
-    ///    digit of the coefficient decides the rounding.
-    ///  - Truncation is less than the digit count: representable as a subnormal,
-    ///    with some precision preserved and rounding applied.
+    /// - Truncation needed exceeds the digit count: result is zero (the value is below half the
+    ///   smallest subnormal).
+    /// - Truncation equals the digit count: boundary case where the leading digit of the
+    ///   coefficient determines rounding.
+    /// - Truncation is less than the digit count: representable as a subnormal; some precision
+    ///   is preserved, with rounding.
     private static func finalizeUnderflowRegion(_ formatIsBid: Bool, _ sign: Bool, _ qExp: Int,
                                                 _ dw1: UInt64, _ dw0: UInt64,
                                                 _ residue: Int) -> Words {
@@ -1722,36 +1698,33 @@ public enum Decimal128TextCodec {
         return finalizeSubnormal(formatIsBid, sign, qExp, dw1, dw0, residue)
     }
 
-    /// Round a parsed coefficient/exponent pair to ties-to-even and finalize it
-    /// into an encoding.
+    /// Round and finalize a finite parsed coefficient/exponent pair into its encoding.
+    /// Implements roundTiesToEven rounding with full handling of the decimal128 boundary
+    /// conditions: oversized coefficient, underflow to subnormal or zero, overflow to infinity,
+    /// and the clamped-near-Emax region where a finite value with too-large quantum exponent
+    /// can be representable by absorbing the excess into the coefficient.
     ///
-    /// Full handling of the decimal128 boundary conditions: underflow to
-    /// subnormal or zero, overflow to infinity, and the clamped-near-Emax region
-    /// where a finite value with too-large quantum exponent is still
-    /// representable by absorbing the excess into the coefficient.
+    /// Step 1 (fast path): if the input already fits within precision and range and no rounding
+    /// is required (residue <= `LT_HALF`, or `HALF` with an even retained low bit), encode and
+    /// return immediately. This picks up the vast majority of cases.
     ///
-    /// Step 1 (fast path): if the input already fits within precision and range
-    /// and no rounding is required -- residue at most LT_HALF, or HALF with an
-    /// even retained low bit -- encode and return immediately. This picks up the
-    /// vast majority of cases.
+    /// Step 2 (zero coefficient): zeros that are out of qExp range get clamped to the valid
+    /// range.
     ///
-    /// Step 2 (zero coefficient): zeros with an out-of-range qExp get clamped
-    /// into range.
+    /// Step 3 (special values): not applicable here -- special values are handled by callers
+    /// before reaching this function.
     ///
-    /// Step 3 (special values): not applicable -- specials are handled by the
-    /// callers before reaching here.
+    /// Step 4 (underflow): if the exponent is below Emin, divert to `finalizeUnderflowRegion`
+    /// for subnormal handling.
     ///
-    /// Step 4 (underflow): below Emin, divert to ``finalizeUnderflowRegion``.
+    /// Step 5 (precision truncation): REMOVED as unreachable from a codec's callers -- see the
+    /// note in the body, which also states what would have to change for it to be needed again.
     ///
-    /// Step 5 (precision truncation): REMOVED as unreachable from a codec's
-    /// callers -- see the note in the body, which also states what would have to
-    /// change for it to be needed again.
-    ///
-    /// Step 6 (rounding): apply ties-to-even. If rounding rolls the coefficient
+    /// Step 6 (rounding): apply roundTiesToEven. If rounding causes the coefficient to roll
     /// over to 10^34, normalize to 10^33 and increment the exponent.
     ///
-    /// Step 7 (overflow / clamping): above Emax, either absorb the excess into
-    /// the coefficient or overflow to infinity.
+    /// Step 7 (overflow / clamping): if the exponent exceeds Emax, either absorb the excess
+    /// into the coefficient (clamping near Emax) or overflow to infinity.
     private static func roundAndFinalizeFinite(_ formatIsBid: Bool, _ sign: Bool, _ qExpIn: Int,
                                                _ dw1In: UInt64, _ dw0In: UInt64,
                                                _ residueIn: Int) -> Words {
@@ -1847,40 +1820,36 @@ public enum Decimal128TextCodec {
     // MARK: - text -> bits
     // ------------------------------------------------------------------
 
-    /// The code of the byte at `index`, or -1 past the end of the buffer.
-    ///
-    /// The parsers walk the input as byte codes, so end-of-input is one more
-    /// code value rather than a bound test at every read. -1 is not a byte,
-    /// which keeps NUL an ordinary input byte -- and an invalid one -- instead
-    /// of doubling as the terminator: a Swift `String` carries its own length
-    /// and can hold one, and it is rejected.
-    ///
-    /// Swift dropped the increment operator in Swift 3, so the advance is its
-    /// own statement at each call rather than riding in the index. Swift
-    /// strings are also not randomly indexable by integer, so the public entry
-    /// points open a UTF-8 buffer over the input with `withUTF8` and this reads
-    /// that. Every byte a numeral can contain is ASCII, so a multi-byte
-    /// sequence arrives as bytes >= 0x80 and is rejected as an unrecognized
-    /// character.
+    /// The code of the character at `index`, or -1 past the end of the input. The parsers walk
+    /// the input as character codes, so end-of-input is one more code value rather than a bound
+    /// test at every read.
     @inline(__always)
     private static func codeAt(_ str: UnsafeBufferPointer<UInt8>, _ index: Int) -> Int {
+        // -1 is not a byte, which keeps NUL an ordinary input byte -- and an invalid one --
+        // instead of doubling as the terminator: a Swift String carries its own length and can
+        // hold one, and it is rejected. Swift dropped the increment operator in Swift 3, so the
+        // advance is its own statement at each call rather than riding in the index. Swift
+        // strings are also not randomly indexable by integer, so the public entry points open a
+        // UTF-8 buffer over the input with withUTF8 and this reads that. Every byte a numeral
+        // can contain is ASCII, so a multi-byte sequence arrives as bytes >= 0x80 and is
+        // rejected as an unrecognized character.
         (index >= 0 && index < str.count) ? Int(str[index]) : -1
     }
 
+    /// The digit test, spelled out once: `true` for '0' through '9' and nothing else.
     @inline(__always)
     private static func isDigit(_ ch: Int) -> Bool { (ch >= ascii_0 && ch <= ascii_9) }
 
-    /// Parse a finite decimal numeral: an optional radix point, an optional
-    /// `E`/`e` exponent with an optional sign, and any number of digits.
+    /// Parse a finite decimal numeral and produce the corresponding encoding. Accepts an
+    /// optional decimal point, an optional E/e exponent (with optional +/- sign), and any
+    /// number of significant digits. Coefficients with more than 34 significant digits are
+    /// accepted; leading zeros before a non-zero digit are flushed; the digits past 34 are
+    /// properly tracked as residue for subsequent roundTiesToEven rounding. Excess exponent
+    /// magnitudes are clamped to 9999, which is sufficient for the rounding logic to detect
+    /// overflow or underflow.
     ///
-    /// Coefficients with more than 34 significant digits are accepted; leading
-    /// zeros before a non-zero digit are flushed, and the digits past 34 are
-    /// tracked as `residue` for the ties-to-even rounding that follows. Excess
-    /// exponent magnitudes clamp to 9999, which is enough for the rounding logic
-    /// to detect overflow or underflow.
-    ///
-    /// Sign comes from `sign`, already consumed by the dispatcher; `chFirst` is
-    /// the first digit or `.` and is processed by the main loop.
+    /// Sign is taken from the `sign` parameter (already consumed by the dispatcher); the
+    /// leading character `chFirst` is the first digit or `.` and is processed by the main loop.
     private static func parseFiniteValueText(_ out: inout Words, _ formatIsBid: Bool, _ sign: Bool,
                                              _ chFirst: Int, _ str: UnsafeBufferPointer<UInt8>, _ startPos: Int) -> String? {
         var pos = startPos
@@ -2024,8 +1993,8 @@ public enum Decimal128TextCodec {
         return nil
     }
 
-    /// Parse the keyword `Infinity`, or its 3-letter abbreviation `Inf`,
-    /// case-insensitively.
+    /// Parse the keyword Infinity (or its 3-letter abbreviation Inf), case-insensitively, and
+    /// produce the corresponding encoding. Any other input is rejected.
     private static func parseInfinityText(_ out: inout Words, _ sign: Bool, _ chFirst: Int,
                                           _ str: UnsafeBufferPointer<UInt8>, _ startPos: Int) -> String? {
         var pos = startPos
@@ -2054,33 +2023,26 @@ public enum Decimal128TextCodec {
         return nil
     }
 
-    /// Parse `NaN`, `qNaN` or `sNaN` -- case-insensitive -- with an optional
-    /// decimal payload.
+    /// Parse NaN, qNaN, or sNaN (case-insensitive) with an optional decimal payload, and
+    /// produce the corresponding encoding. Payloads of 34+ digits AS WRITTEN are non-canonical
+    /// and produce a zero payload per IEEE 754-2019 section 3.5.2.
     ///
-    /// Payloads of 34+ digits AS WRITTEN are non-canonical and produce a zero
-    /// payload per IEEE 754-2019 3.5.2.
+    /// The payload may be written bare (`NaN123`) or enclosed in parentheses (`NaN(123)`). The
+    /// parenthesised form is positional and balanced: the `(` must follow the word immediately,
+    /// at least one digit must appear, and the `)` must be the last character of the input. So
+    /// `NaN(1)2(3)`, `NaN(1`, `NaN(1]` and `NaN()` are all rejected, and `NaN[1]` / `NaN{1}`
+    /// are not this form at all.
     ///
-    /// The payload may be written bare (`NaN123`) or enclosed in parentheses
-    /// (`NaN(123)`). The parenthesised form is positional and balanced: the `(`
-    /// must follow the word immediately, at least one digit must appear, and the
-    /// `)` must be the last character of the input. So `NaN(1)2(3)`, `NaN(1`,
-    /// `NaN(1]` and `NaN()` are all rejected, and `NaN[1]` / `NaN{1}` are not
-    /// this form at all.
-    ///
-    /// The reason this spelling exists at all
-    /// is that the platform's own `strtod` reads
-    /// `NAN(n-char-sequence)`, so the spelling reaches a caller from the
-    /// platform itself. The resemblance stops at the parentheses -- strtod's
-    /// sequence is letters, digits and underscores read as an
-    /// implementation-defined integer (`NAN(abc)` and `NAN(0x1c8)` are legal
-    /// there), while a decimal128 payload is decimal digits. This is a
-    /// paren-tolerant spelling of our own payload syntax, not strtod's.
-    ///
-    /// The legacy base this family descends from skipped `(`, `)`, `[`, `]`, `{`
-    /// and `}` ANYWHERE, so it read `NaN(1)2(3)` as payload 123. That is not
-    /// this, and stays rejected.
+    /// The reason this spelling exists at all is that the platform's own `strtod` reads
+    /// `NAN(n-char-sequence)`, so the spelling reaches a caller from the platform itself. The
+    /// resemblance stops at the parentheses -- `strtod`'s sequence is letters, digits and
+    /// underscores read as an implementation-defined integer (`NAN(abc)` and `NAN(0x1c8)` are
+    /// legal there), while a decimal128 payload is decimal digits. This is a paren-tolerant
+    /// spelling of our own payload syntax, not `strtod`'s.
     private static func parseNanText(_ out: inout Words, _ formatIsBid: Bool, _ sign: Bool,
                                      _ chFirst: Int, _ str: UnsafeBufferPointer<UInt8>, _ startPos: Int) -> String? {
+        // The legacy base this family descends from skipped (, ), [, ], { and } ANYWHERE, so it
+        // read NaN(1)2(3) as payload 123. That is not this, and stays rejected.
         var pos = startPos
         var ch = chFirst
         let hasS = ((ch | 0x20) == ascii_s)
@@ -2165,11 +2127,10 @@ public enum Decimal128TextCodec {
         return nil
     }
 
-    /// Top-level dispatcher. Reads an optional sign, then dispatches by leading
-    /// character to the finite-value, infinity or NaN parser.
-    ///
-    /// The leading character is passed through to the dispatched parser so it
-    /// does not have to re-read what the dispatcher already consumed.
+    /// Top-level dispatcher for parsing a decimal character sequence into an encoding. Reads
+    /// optional sign, then dispatches by leading character to the finite-value, infinity, or
+    /// NaN parser. The leading character is also passed through to the dispatched parser so it
+    /// doesn't have to re-read what the dispatcher already consumed.
     private static func encodeStringOrError(_ out: inout Words, formatIsBid: Bool, str: UnsafeBufferPointer<UInt8>) -> String? {
         var pos = 0
         let chFirst = codeAt(str, pos)
