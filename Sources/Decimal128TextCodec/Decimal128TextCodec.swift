@@ -682,9 +682,9 @@ public enum Decimal128TextCodec {
         let p1 = POW10[pow10Offset &+ 1]
         let p0 = POW10[pow10Offset]
         if (dw1 != p1) {
-            return (dw1 < p1) ? hiDigitCount &- 1 : hiDigitCount
+            return hiDigitCount &- ((dw1 < p1) ? 1 : 0)
         }
-        return (dw0 < p0) ? hiDigitCount &- 1 : hiDigitCount
+        return hiDigitCount &- ((dw0 < p0) ? 1 : 0)
     }
 
     /// Multiply a 64-bit unsigned value `x` by `10^pow10` and add a 64-bit integer `a`,
@@ -990,6 +990,7 @@ public enum Decimal128TextCodec {
         let g = (gh &* M_U32_DIV_1E1) >> S_U32_DIV_1E1
         let h = gh &- (g &* 10)
 
+        demand(offMaxx &- 8 >= 0 && offMaxx <= ascii.count, "render8DigitsBeforeIndex: offset out of range")
         let zero = UInt8(ascii_0)
         ascii[offMaxx &- 8] = zero &+ UInt8(truncatingIfNeeded: a)
         ascii[offMaxx &- 7] = zero &+ UInt8(truncatingIfNeeded: b)
@@ -1030,6 +1031,7 @@ public enum Decimal128TextCodec {
             let b = ab &- (a &* 10)
             let c = (cd &* M_U32_DIV_1E1) >> S_U32_DIV_1E1
             let d = cd &- (c &* 10)
+            demand(ib &- 4 >= 0 && ib <= ascii.count, "u128ToAscii: offset out of range")
             ascii[ib &- 4] = zero &+ UInt8(truncatingIfNeeded: a)
             ascii[ib &- 3] = zero &+ UInt8(truncatingIfNeeded: b)
             ascii[ib &- 2] = zero &+ UInt8(truncatingIfNeeded: c)
@@ -1132,11 +1134,7 @@ public enum Decimal128TextCodec {
         let signLen = sign ? 1 : 0
         let totalLen = signLen &+ INFINITY_TEXT.count
         out[0] = UInt8(ascii_minus) // overwritten by the 'I' when unsigned
-        var i = 0
-        while (i < INFINITY_TEXT.count) {
-            out[signLen &+ i] = INFINITY_TEXT[i]
-            i &+= 1
-        }
+        _ = out[signLen...].update(fromContentsOf: INFINITY_TEXT)
         return totalLen
     }
 
@@ -1149,11 +1147,7 @@ public enum Decimal128TextCodec {
         let baseLen = wordOff &+ NAN_TEXT.count
         out[0] = UInt8(ascii_minus)   // overwritten by the 's' or the 'N' when unsigned
         out[signLen] = UInt8(ascii_s) // overwritten by the 'N' when quiet
-        var i = 0
-        while (i < NAN_TEXT.count) {
-            out[wordOff &+ i] = NAN_TEXT[i]
-            i &+= 1
-        }
+        _ = out[wordOff...].update(fromContentsOf: NAN_TEXT)
         if (payloadHi | payloadLo) == 0 ||
             // non canonical IEEE 754-2019 3.5.2 c) 2)
             MAX_PAYLOAD_HI < payloadHi ||
@@ -1173,11 +1167,7 @@ public enum Decimal128TextCodec {
             let k = -qExp
             let zeroLen = (k == 0) ? 1 : k &+ 2
             out[0] = UInt8(ascii_minus) // overwritten by the '0' when unsigned
-            var i = 0
-            while (i < zeroLen) {
-                out[signLen &+ i] = PLAIN_ZERO[i]
-                i &+= 1
-            }
+            _ = out[signLen...].update(fromContentsOf: PLAIN_ZERO[0 ..< zeroLen])
             return signLen &+ zeroLen
         }
         // A positive exponent needs an explicit '+'; a negative one prints its
@@ -1190,11 +1180,7 @@ public enum Decimal128TextCodec {
         let plusLen = (qExp > 0) ? 1 : 0
         let baseLen = signLen &+ ZERO_EXP_TEXT.count &+ plusLen
         out[0] = UInt8(ascii_minus) // overwritten by the '0' when unsigned
-        var i = 0
-        while (i < ZERO_EXP_TEXT.count) {
-            out[signLen &+ i] = ZERO_EXP_TEXT[i]
-            i &+= 1
-        }
+        _ = out[signLen...].update(fromContentsOf: ZERO_EXP_TEXT)
         out[signLen &+ ZERO_EXP_TEXT.count] = UInt8(ascii_plus) // overwritten by the '-' when qExp < 0
         return baseLen &+ appendInt(out, baseLen, qExp)
     }
